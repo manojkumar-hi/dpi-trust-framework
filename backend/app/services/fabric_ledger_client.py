@@ -97,6 +97,69 @@ class FabricLedgerClient:
             f"/internal/credentials/{_path_value(credential_id)}/history",
         )
 
+    async def issue_delegation(
+        self,
+        delegation_id: UUID | str,
+        delegator_did: str,
+        delegatee_did: str,
+        canonical_hash: str,
+        issued_at: datetime | str,
+        expires_at: datetime | str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/internal/delegations/issue",
+            json={
+                "delegationId": _wire_value(delegation_id),
+                "delegatorDid": delegator_did,
+                "delegateeDid": delegatee_did,
+                "canonicalHash": canonical_hash,
+                "issuedAt": _wire_value(issued_at),
+                "expiresAt": _wire_value(expires_at),
+            },
+        )
+
+    async def read_delegation(self, delegation_id: UUID | str) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/internal/delegations/{_path_value(delegation_id)}",
+        )
+
+    async def verify_delegation(
+        self,
+        delegation_id: UUID | str,
+        canonical_hash: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/internal/delegations/{_path_value(delegation_id)}/verify",
+            json={"canonicalHash": canonical_hash},
+        )
+
+    async def revoke_delegation(
+        self,
+        delegation_id: UUID | str,
+        reason: str,
+        revoked_at: datetime | str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/internal/delegations/{_path_value(delegation_id)}/revoke",
+            json={
+                "reason": reason,
+                "revokedAt": _wire_value(revoked_at),
+            },
+        )
+
+    async def get_delegation_history(
+        self,
+        delegation_id: UUID | str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/internal/delegations/{_path_value(delegation_id)}/history",
+        )
+
     async def _request(
         self,
         method: str,

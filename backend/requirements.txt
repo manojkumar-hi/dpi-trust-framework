@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
+alembic
 psycopg[binary]
 pydantic-settings
 cryptography
 httpx
+pytest

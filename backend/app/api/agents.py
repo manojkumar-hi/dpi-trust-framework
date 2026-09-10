@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
 from app.schemas.agent import AgentCreate, AgentResponse
+from app.schemas.delegation import DelegationResponse
+
 from app.services.agent_service import create_agent, get_agent, get_agents
+from app.services.delegation_service import get_delegations
 from app.services.organization_service import get_organization
 
 router = APIRouter(prefix="/agents", tags=["Agent Registry"])
@@ -31,3 +34,12 @@ def retrieve_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentRespon
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     return agent
+
+
+@router.get("/{agent_id}/delegations", response_model=list[DelegationResponse])
+def get_delegations_for_agent(agent_id: UUID, db: Session = Depends(get_db)) -> list[DelegationResponse]:
+    agent = get_agent(db, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    return get_delegations(db, agent_id=agent_id)
+

@@ -1,0 +1,31 @@
+{
+    "name": "trust-ledger",
+    "version": "1.2.0",
+    "description": "Hyperledger Fabric chaincode for DPI Trust Framework credential trust management",
+    "main": "index.js",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "start": "fabric-chaincode-node start"
+    },
+    "keywords": [
+        "hyperledger-fabric",
+        "chaincode",
+        "trust",
+        "credentials",
+        "dpi"
+    ],
+    "author": "DPI Trust Framework",
+    "license": "Apache-2.0",
+    "dependencies": {
+        "fabric-contract-api": "2.5.6",
+        "fabric-shim": "2.5.6",
+        "json-stringify-deterministic": "^1.0.0",
+        "sort-keys-recursive": "^2.1.0"
+    },
+    "overrides": {
+        "@hyperledger/fabric-protos": "0.2.1",
+        "@grpc/grpc-js": "1.10.9"
+    }
+}

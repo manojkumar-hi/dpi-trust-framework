@@ -3,6 +3,7 @@ import express from "express";
 import credentialsRouter, {
   FabricOperationError,
 } from "./routes/credentials.js";
+import delegationsRouter from "./routes/delegations.js";
 import { closeFabricConnection } from "./fabric-client.js";
 import { config } from "./config.js";
 
@@ -15,6 +16,8 @@ app.get("/health", (_request, response) => {
 });
 
 app.use("/internal/credentials", credentialsRouter);
+app.use("/internal/delegations", delegationsRouter);
+
 
 app.use((error, _request, response, _next) => {
   const statusCode = error.statusCode ?? (

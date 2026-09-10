@@ -10,6 +10,7 @@ from app.database.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent_identity import AgentIdentity
+    from app.models.delegation import Delegation
     from app.models.organization import Organization
     from app.models.verifiable_credential import VerifiableCredential
 
@@ -36,4 +37,8 @@ class Agent(Base):
     )
     credentials: Mapped[list["VerifiableCredential"]] = relationship(
         back_populates="subject_agent"
+    )
+    incoming_delegations: Mapped[list["Delegation"]] = relationship(
+        back_populates="delegatee_agent",
+        foreign_keys="Delegation.delegatee_agent_id",
     )

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.organization import Organization
 from app.models.organization_identity import OrganizationIdentity
+from app.models.organization_identity_key import OrganizationIdentityKey
 from app.schemas.agent_identity import DIDResolutionResponse
 from app.services.organization_key_service import save_private_key
 
@@ -60,10 +61,18 @@ def create_organization_identity(
 
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    now = datetime.now(timezone.utc)
     identity = OrganizationIdentity(
         organization_id=organization_id,
         did=generate_organization_did(organization_id),
         public_key=base64.b64encode(public_key).decode("ascii"),
+    )
+    identity.keys.append(
+        OrganizationIdentityKey(
+            verification_method=f"{identity.did}#key-1",
+            public_key=identity.public_key,
+            valid_from=now,
+        )
     )
     save_private_key(organization_id, private_key)
     db.add(identity)
@@ -91,9 +100,26 @@ def rekey_organization_identity(
 
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    now = datetime.now(timezone.utc)
+    previous_key = db.scalar(
+        select(OrganizationIdentityKey)
+        .where(OrganizationIdentityKey.organization_identity_id == identity.id)
+        .where(OrganizationIdentityKey.status == "active")
+    )
+    next_key_number = len(identity.keys) + 1
+    if previous_key is not None:
+        previous_key.status = "retired"
+        previous_key.valid_until = now
     save_private_key(organization_id, private_key)
     identity.public_key = base64.b64encode(public_key).decode("ascii")
-    identity.updated_at = datetime.now(timezone.utc)
+    identity.keys.append(
+        OrganizationIdentityKey(
+            verification_method=f"{identity.did}#key-{next_key_number}",
+            public_key=identity.public_key,
+            valid_from=now,
+        )
+    )
+    identity.updated_at = now
     db.commit()
     db.refresh(identity)
     return identity
@@ -108,7 +134,14 @@ def resolve_organization_did(
     if identity is None:
         return None
 
-    verification_method_id = f"{identity.did}#key-1"
+    active_key = next(
+        (key for key in identity.keys if key.status == "active"),
+        None,
+    )
+    verification_method_id = (
+        active_key.verification_method if active_key is not None else f"{identity.did}#key-1"
+    )
+    public_key = active_key.public_key if active_key is not None else identity.public_key
     return DIDResolutionResponse(
         **{
             "@context": ["https://www.w3.org/ns/did/v1"],
@@ -118,7 +151,7 @@ def resolve_organization_did(
                     "id": verification_method_id,
                     "type": "Ed25519VerificationKey2020",
                     "controller": identity.did,
-                    "publicKeyBase64": identity.public_key,
+                    "publicKeyBase64": public_key,
                 }
             ],
             "authentication": [verification_method_id],

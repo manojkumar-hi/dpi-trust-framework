@@ -15,6 +15,7 @@ from app.api.organization_key_management import router as organization_key_manag
 from app.api.organization_identity_resolution import (
     router as organization_identity_resolution_router,
 )
+from app.api.delegations import router as delegations_router
 from app.core.config import get_settings
 from app.database.base import Base
 from app.database.connection import engine
@@ -46,3 +47,4 @@ app.include_router(identity_resolution_router)
 app.include_router(organization_identities_router)
 app.include_router(organization_key_management_router)
 app.include_router(organization_identity_resolution_router)
+app.include_router(delegations_router)

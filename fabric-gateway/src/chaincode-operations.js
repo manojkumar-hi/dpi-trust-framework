@@ -95,3 +95,43 @@ export function revokeCredential(credentialId, revocationReason, revokedAt) {
 export function getCredentialHistory(credentialId) {
   return evaluate("GetCredentialHistory", credentialId);
 }
+
+export function issueDelegation(
+  delegationId,
+  delegatorDid,
+  delegateeDid,
+  canonicalHash,
+  issuedAt,
+  expiresAt,
+) {
+  return submit(
+    "IssueDelegation",
+    delegationId,
+    delegatorDid,
+    delegateeDid,
+    canonicalHash,
+    issuedAt,
+    expiresAt,
+  );
+}
+
+export function readDelegation(delegationId) {
+  return evaluate("ReadDelegation", delegationId);
+}
+
+export function verifyDelegation(delegationId, canonicalHash) {
+  return evaluate("VerifyDelegation", delegationId, canonicalHash);
+}
+
+export function revokeDelegation(delegationId, revocationReason, revokedAt) {
+  return submit(
+    "RevokeDelegation",
+    delegationId,
+    revocationReason,
+    revokedAt,
+  );
+}
+
+export function getDelegationHistory(delegationId) {
+  return evaluate("GetDelegationHistory", delegationId);
+}

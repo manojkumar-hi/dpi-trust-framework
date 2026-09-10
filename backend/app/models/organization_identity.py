@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base
 
 if TYPE_CHECKING:
+    from app.models.organization_identity_key import OrganizationIdentityKey
     from app.models.organization import Organization
 
 
@@ -30,3 +31,8 @@ class OrganizationIdentity(Base):
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="identity")
+    keys: Mapped[list["OrganizationIdentityKey"]] = relationship(
+        back_populates="organization_identity",
+        cascade="all, delete-orphan",
+        order_by="OrganizationIdentityKey.created_at",
+    )
