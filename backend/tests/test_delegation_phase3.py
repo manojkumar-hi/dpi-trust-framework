@@ -38,7 +38,7 @@ def test_db_session():
         verification_method=f"{organization_identity.did}#key-1",
         public_key=_public_key(private_key),
         status="active",
-        valid_from=datetime.now(timezone.utc),
+        valid_from=datetime.now(timezone.utc) - timedelta(days=1),
     )
     session = FakeSession(organization, agent, organization_identity, agent_identity, key)
     session.private_key = private_key
@@ -78,11 +78,33 @@ def test_create_delegation_success(override_get_db, test_db_session, monkeypatch
         "capabilities": [{"capability_code": "agent.read"}]
     }
 
-    response = client.post("/delegations", json=payload)
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
+    response = client.post("/delegations", json=payload, headers=headers)
     assert response.status_code == 201
     data = response.json()
     assert data["delegator_organization_id"] == str(org.id)
     assert data["status"] == "active"
+
+def test_create_delegation_unauthorized_403(override_get_db, test_db_session, monkeypatch):
+    monkeypatch.setattr(delegation_service, "load_private_key", lambda _: test_db_session.private_key)
+    org = test_db_session.organization
+    agent = test_db_session.agent
+    now = datetime.now(timezone.utc)
+    
+    payload = {
+        "delegator_organization_id": str(org.id),
+        "delegatee_agent_id": str(agent.id),
+        "purpose": "Test Phase 3 API",
+        "starts_at": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "capabilities": [{"capability_code": "agent.read"}]
+    }
+
+    # Use a different org ID for the principal
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}
+    response = client.post("/delegations", json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "not authorized" in response.text
 
 def test_create_delegation_validation_error_422(override_get_db, test_db_session, monkeypatch):
     monkeypatch.setattr(delegation_service, "load_private_key", lambda _: test_db_session.private_key)
@@ -99,8 +121,9 @@ def test_create_delegation_validation_error_422(override_get_db, test_db_session
         "expires_at": (now - timedelta(hours=1)).isoformat(),
         "capabilities": [{"capability_code": "agent.read"}]
     }
-    response = client.post("/delegations", json=payload)
-    assert response.status_code == 422
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
+    response = client.post("/delegations", json=payload, headers=headers)
+    assert response.status_code == 400
     assert "starts_at must be before expires_at" in response.text
 
 def test_create_delegation_unknown_capability_422(override_get_db, test_db_session, monkeypatch):
@@ -117,8 +140,9 @@ def test_create_delegation_unknown_capability_422(override_get_db, test_db_sessi
         "expires_at": (now + timedelta(hours=1)).isoformat(),
         "capabilities": [{"capability_code": "unknown.capability"}]
     }
-    response = client.post("/delegations", json=payload)
-    assert response.status_code == 422
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
+    response = client.post("/delegations", json=payload, headers=headers)
+    assert response.status_code == 400
     assert "Unknown capability code" in response.text
 
 def test_create_delegation_parent_rejection_422(override_get_db, test_db_session, monkeypatch):
@@ -136,12 +160,14 @@ def test_create_delegation_parent_rejection_422(override_get_db, test_db_session
         "capabilities": [{"capability_code": "agent.read"}],
         "parent_delegation_id": str(uuid4())
     }
-    response = client.post("/delegations", json=payload)
-    assert response.status_code == 422
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
+    response = client.post("/delegations", json=payload, headers=headers)
+    assert response.status_code == 400
     assert "Subdelegation creation is not supported" in response.text
 
 def test_get_delegation_404(override_get_db):
-    response = client.get(f"/delegations/{uuid4()}")
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}
+    response = client.get(f"/delegations/{uuid4()}", headers=headers)
     assert response.status_code == 404
 
 def test_retrieve_and_verify_delegation(override_get_db, test_db_session):
@@ -151,20 +177,25 @@ def test_retrieve_and_verify_delegation(override_get_db, test_db_session):
     test_db_session.organization_identity = org_id
     test_db_session.agent_identity = agent_id
     test_db_session.delegation = delegation
+    test_db_session.key.organization_identity_id = org_id.id
+    test_db_session.key.verification_method = f"{org_id.did}#key-1"
+    
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
     
     # Retrieve
-    response = client.get(f"/delegations/{delegation.id}")
+    response = client.get(f"/delegations/{delegation.id}", headers=headers)
     assert response.status_code == 200
     assert response.json()["id"] == str(delegation.id)
     
     # Verify
-    verify_resp = client.get(f"/delegations/{delegation.id}/verify")
+    verify_resp = client.get(f"/delegations/{delegation.id}/verify", headers=headers)
     assert verify_resp.status_code == 200
-    assert verify_resp.json()["valid"] is True
+    assert verify_resp.json()["valid"] is True, verify_resp.json()
     assert verify_resp.json()["signature_valid"] is True
 
 def test_verify_delegation_404(override_get_db):
-    response = client.get(f"/delegations/{uuid4()}/verify")
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}
+    response = client.get(f"/delegations/{uuid4()}/verify", headers=headers)
     assert response.status_code == 404
 
 def test_revoke_delegation_and_verify_after_revocation(override_get_db, test_db_session):
@@ -174,24 +205,41 @@ def test_revoke_delegation_and_verify_after_revocation(override_get_db, test_db_
     test_db_session.organization_identity = org_id
     test_db_session.agent_identity = agent_id
     test_db_session.delegation = delegation
+    test_db_session.key.organization_identity_id = org_id.id
+    test_db_session.key.verification_method = f"{org_id.did}#key-1"
     
+    headers = {"X-Mock-Principal-Org-Id": str(org.id)}
     # Revoke
     revoke_payload = {"reason": "Compromised key"}
-    revoke_resp = client.post(f"/delegations/{delegation.id}/revoke", json=revoke_payload)
+    revoke_resp = client.post(f"/delegations/{delegation.id}/revoke", json=revoke_payload, headers=headers)
     assert revoke_resp.status_code == 200
     assert revoke_resp.json()["status"] == "revoked"
     
     # Verify after revocation
-    verify_resp = client.get(f"/delegations/{delegation.id}/verify")
+    verify_resp = client.get(f"/delegations/{delegation.id}/verify", headers=headers)
     assert verify_resp.status_code == 200
     assert verify_resp.json()["valid"] is False
     assert verify_resp.json()["lifecycle_valid"] is False
     assert verify_resp.json()["status"] == "revoked"
     
-    # Try revoking again
-    revoke_resp2 = client.post(f"/delegations/{delegation.id}/revoke", json=revoke_payload)
-    assert revoke_resp2.status_code == 409
-    assert "already revoked" in revoke_resp2.text
+    # Try revoking again (idempotent success)
+    revoke_resp2 = client.post(f"/delegations/{delegation.id}/revoke", json=revoke_payload, headers=headers)
+    assert revoke_resp2.status_code == 200
+    assert revoke_resp2.json()["status"] == "revoked"
+
+def test_revoke_delegation_unauthorized_403(override_get_db, test_db_session):
+    delegation, org, agent, org_id, agent_id = _signed_delegation_with_timestamps(test_db_session.private_key)
+    test_db_session.organization = org
+    test_db_session.agent = agent
+    test_db_session.organization_identity = org_id
+    test_db_session.agent_identity = agent_id
+    test_db_session.delegation = delegation
+    
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}  # Different org ID
+    revoke_payload = {"reason": "Malicious revocation attempt"}
+    revoke_resp = client.post(f"/delegations/{delegation.id}/revoke", json=revoke_payload, headers=headers)
+    assert revoke_resp.status_code == 403
+    assert "not authorized" in revoke_resp.text
 
 def test_get_delegations_listing(override_get_db, test_db_session):
     delegation, org, agent, org_id, agent_id = _signed_delegation_with_timestamps(test_db_session.private_key)
@@ -208,14 +256,16 @@ def test_get_delegations_listing(override_get_db, test_db_session):
 @patch("app.api.delegations.get_delegations")
 def test_list_delegations_endpoint(mock_get_delegations, override_get_db):
     mock_get_delegations.return_value = []
-    resp = client.get("/delegations")
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}
+    resp = client.get("/delegations", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
 @patch("app.api.delegations.get_delegation_chain")
 def test_get_delegation_chain_endpoint(mock_get_chain, override_get_db):
     mock_get_chain.return_value = []
-    resp = client.get(f"/delegations/{uuid4()}/chain")
+    headers = {"X-Mock-Principal-Org-Id": str(uuid4())}
+    resp = client.get(f"/delegations/{uuid4()}/chain", headers=headers)
     assert resp.status_code == 200
 
 @patch("app.api.organizations.get_delegations")

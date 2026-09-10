@@ -13,6 +13,7 @@ from app.models.delegation import Delegation
 from app.models.delegation_capability import DelegationCapability
 from app.models.organization import Organization
 from app.models.organization_identity import OrganizationIdentity
+from app.api.dependencies import Principal
 from app.models.organization_identity_key import OrganizationIdentityKey
 from app.schemas.delegation import DelegationCapabilityCreate, DelegationCreate
 from app.services import delegation_service
@@ -239,7 +240,8 @@ async def test_create_and_verify_valid_signed_delegation(monkeypatch):
     )
     db = FakeSession(organization, agent, organization_identity, agent_identity, key)
     monkeypatch.setattr(delegation_service, "load_private_key", lambda _: private_key)
-    delegation = await delegation_service.create_delegation(db, _request(organization, agent))
+    principal = Principal(organization_id=organization.id)
+    delegation = await delegation_service.create_delegation(db, principal, _request(organization, agent))
     result = await delegation_service.verify_delegation(db, delegation.id)
     assert result.valid is True
     assert result.signature_valid is True
@@ -262,8 +264,19 @@ async def test_tampered_delegation_is_rejected():
 async def test_historical_key_snapshot_verifies_after_rekey():
     old_key = Ed25519PrivateKey.generate()
     delegation, organization, agent, organization_identity, agent_identity = _signed_delegation(old_key)
+    
+    key = OrganizationIdentityKey(
+        id=uuid4(),
+        organization_identity_id=organization_identity.id,
+        verification_method=f"{organization_identity.did}#key-1",
+        public_key=_public_key(old_key),
+        status="retired",
+        valid_from=delegation.signed_at - timedelta(days=1),
+        valid_until=delegation.signed_at + timedelta(days=1)
+    )
+    
     organization_identity.public_key = _public_key(Ed25519PrivateKey.generate())
-    db = FakeSession(organization, agent, organization_identity, agent_identity)
+    db = FakeSession(organization, agent, organization_identity, agent_identity, key)
     db.delegation = delegation
     result = await delegation_service.verify_delegation(db, delegation.id)
     assert result.valid is True
@@ -274,19 +287,20 @@ async def test_invalid_principals_and_inactive_identities_are_rejected():
     private_key = Ed25519PrivateKey.generate()
     organization, agent, organization_identity, agent_identity = _identities(private_key)
     db = FakeSession(None, agent, organization_identity, agent_identity)
+    principal = Principal(organization_id=organization.id)
     with pytest.raises(delegation_service.InvalidDelegationError):
-        await delegation_service.create_delegation(db, _request(organization, agent))
+        await delegation_service.create_delegation(db, principal, _request(organization, agent))
 
     organization.status = "inactive"
     db = FakeSession(organization, agent, organization_identity, agent_identity)
     with pytest.raises(delegation_service.InvalidDelegationError):
-        await delegation_service.create_delegation(db, _request(organization, agent))
+        await delegation_service.create_delegation(db, principal, _request(organization, agent))
 
     organization.status = "active"
     organization_identity.status = "inactive"
     db = FakeSession(organization, agent, organization_identity, agent_identity)
     with pytest.raises(delegation_service.InvalidDelegationError):
-        await delegation_service.create_delegation(db, _request(organization, agent))
+        await delegation_service.create_delegation(db, principal, _request(organization, agent))
 
 
 @pytest.mark.asyncio
@@ -294,13 +308,14 @@ async def test_invalid_time_range_and_unknown_capability_are_rejected():
     organization, agent, organization_identity, agent_identity = _identities()
     db = FakeSession(organization, agent, organization_identity, agent_identity)
     now = datetime.now(timezone.utc)
+    principal = Principal(organization_id=organization.id)
     with pytest.raises(delegation_service.InvalidDelegationError):
         await delegation_service.create_delegation(
-            db, _request(organization, agent, starts_at=now, expires_at=now)
+            db, principal, _request(organization, agent, starts_at=now, expires_at=now)
         )
     with pytest.raises(delegation_service.InvalidDelegationError):
         await delegation_service.create_delegation(
-            db, _request(organization, agent, capability="unknown.action")
+            db, principal, _request(organization, agent, capability="unknown.action")
         )
 
 
@@ -322,7 +337,8 @@ async def test_revocation_and_revocation_state_validation():
     delegation, organization, agent, organization_identity, agent_identity = _signed_delegation()
     db = FakeSession(organization, agent, organization_identity, agent_identity)
     db.delegation = delegation
-    revoked = await delegation_service.revoke_delegation(db, delegation.id, "Compromised")
+    principal = Principal(organization_id=organization.id)
+    revoked = await delegation_service.revoke_delegation(db, principal, delegation.id, "Compromised")
     assert revoked.status == "revoked"
     assert revoked.revoked_at is not None
     assert any(event.event_type == "revoked" for event in db.events)
@@ -335,3 +351,40 @@ async def test_revocation_and_revocation_state_validation():
         delegation_service.validate_revocation_state(
             "active", datetime.now(timezone.utc), None
         )
+
+@pytest.mark.asyncio
+async def test_key_timeline_validation():
+    private_key = Ed25519PrivateKey.generate()
+    delegation, organization, agent, organization_identity, agent_identity = _signed_delegation(private_key)
+    
+    # 1. Valid key
+    key = OrganizationIdentityKey(
+        id=uuid4(),
+        organization_identity_id=organization_identity.id,
+        verification_method=f"{organization_identity.did}#key-1",
+        public_key=_public_key(private_key),
+        status="active",
+        valid_from=delegation.signed_at - timedelta(days=1),
+        valid_until=None
+    )
+    db = FakeSession(organization, agent, organization_identity, agent_identity, key)
+    db.delegation = delegation
+    result = await delegation_service.verify_delegation(db, delegation.id)
+    assert result.signature_valid is True
+    
+    # 2. Key created after signed_at -> Invalid
+    key.valid_from = delegation.signed_at + timedelta(days=1)
+    result = await delegation_service.verify_delegation(db, delegation.id)
+    assert result.signature_valid is False
+    
+    # 3. Key expired before signed_at -> Invalid
+    key.valid_from = delegation.signed_at - timedelta(days=2)
+    key.valid_until = delegation.signed_at - timedelta(days=1)
+    result = await delegation_service.verify_delegation(db, delegation.id)
+    assert result.signature_valid is False
+    
+    # 4. Key retired but was valid at signed_at -> Valid
+    key.status = "retired"
+    key.valid_until = delegation.signed_at + timedelta(days=1)
+    result = await delegation_service.verify_delegation(db, delegation.id)
+    assert result.signature_valid is True

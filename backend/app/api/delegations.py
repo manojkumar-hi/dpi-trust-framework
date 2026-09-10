@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_principal
+from app.api.dependencies import Principal, get_current_principal
 from app.database.connection import get_db
 from app.schemas.delegation import (
     DelegationCreate,
@@ -12,6 +12,7 @@ from app.schemas.delegation import (
     RevocationRequest,
 )
 from app.services.delegation_service import (
+    AuthorizationError,
     DelegationAlreadyRevokedError,
     DelegationNotFoundError,
     InvalidDelegationError,
@@ -31,12 +32,14 @@ router = APIRouter(prefix="/delegations", tags=["Delegation Management"])
 async def create_delegation_endpoint(
     delegation_data: DelegationCreate,
     db: Session = Depends(get_db),
-    principal: dict = Depends(get_current_principal),
+    principal: Principal = Depends(get_current_principal),
 ) -> DelegationResponse:
     try:
-        return await create_delegation(db, delegation_data)
+        return await create_delegation(db, principal, delegation_data)
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except InvalidDelegationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except OrganizationSigningKeyUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -93,13 +96,13 @@ async def revoke_delegation_endpoint(
     delegation_id: UUID,
     request: RevocationRequest,
     db: Session = Depends(get_db),
-    principal: dict = Depends(get_current_principal),
+    principal: Principal = Depends(get_current_principal),
 ) -> DelegationResponse:
     try:
-        return await revoke_delegation(db, delegation_id, request.reason)
+        return await revoke_delegation(db, principal, delegation_id, request.reason)
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except DelegationNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Delegation not found")
-    except DelegationAlreadyRevokedError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delegation is already revoked")
     except InvalidDelegationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

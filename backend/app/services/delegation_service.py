@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import Principal
 from app.core.capability_catalog import get_capability_definition
 from app.models.agent import Agent
 from app.models.agent_identity import AgentIdentity
@@ -29,6 +30,10 @@ from app.services.organization_key_service import load_private_key
 
 
 class DelegationError(Exception):
+    pass
+
+
+class AuthorizationError(DelegationError):
     pass
 
 
@@ -136,7 +141,9 @@ def _add_event(
     )
 
 
-async def create_delegation(db: Session, data: DelegationCreate) -> Delegation:
+async def create_delegation(db: Session, principal: Principal, data: DelegationCreate) -> Delegation:
+    if principal.organization_id != data.delegator_organization_id:
+        raise AuthorizationError("Principal is not authorized to act on behalf of the delegator organization")
     if data.parent_delegation_id is not None:
         raise InvalidDelegationError("Subdelegation creation is not supported in Module 9")
     _require_aware_timestamps(data)
@@ -358,22 +365,37 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
         for capability in delegation.capabilities
     )
     signature_valid = False
-    try:
-        if organization_identity is None or not delegation.verification_method.startswith(
-            f"{delegation.delegator_did}#"
-        ):
-            raise ValueError
-        public_key = Ed25519PublicKey.from_public_bytes(
-            base64.b64decode(delegation.signing_public_key)
-        )
-        public_key.verify(base64.b64decode(delegation.signature), canonical_bytes)
-        signature_valid = True
-    except (InvalidSignature, ValueError, TypeError):
+    
+    key = db.scalar(
+        select(OrganizationIdentityKey)
+        .where(OrganizationIdentityKey.verification_method == delegation.verification_method)
+    )
+    if key is None or organization_identity is None or key.organization_identity_id != organization_identity.id:
         signature_valid = False
+    elif key.valid_from > delegation.signed_at:
+        signature_valid = False
+    elif key.valid_until is not None and delegation.signed_at > key.valid_until:
+        signature_valid = False
+    else:
+        try:
+            public_key = Ed25519PublicKey.from_public_bytes(
+                base64.b64decode(delegation.signing_public_key)
+            )
+            public_key.verify(base64.b64decode(delegation.signature), canonical_bytes)
+            signature_valid = True
+        except (InvalidSignature, ValueError, TypeError):
+            signature_valid = False
+
+    parent_valid = True
+    if delegation.parent_delegation_id is not None:
+        parent = db.get(Delegation, delegation.parent_delegation_id)
+        if parent is None or parent.status != "active":
+            parent_valid = False
 
     lifecycle_valid = (
         delegation.status == "active"
         and delegation.starts_at <= _utc_now() < delegation.expires_at
+        and parent_valid
     )
     valid = (
         lifecycle_valid
@@ -413,12 +435,14 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
     )
 
 
-async def revoke_delegation(db: Session, delegation_id: UUID, reason: str) -> Delegation:
+async def revoke_delegation(db: Session, principal: Principal, delegation_id: UUID, reason: str) -> Delegation:
     delegation = db.get(Delegation, delegation_id)
     if delegation is None:
         raise DelegationNotFoundError
+    if principal.organization_id != delegation.delegator_organization_id:
+        raise AuthorizationError("Principal is not authorized to revoke this delegation")
     if delegation.status == "revoked":
-        raise DelegationAlreadyRevokedError
+        return delegation
     if not reason.strip():
         raise InvalidDelegationError("Revocation reason is required")
 
