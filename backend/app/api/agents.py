@@ -43,3 +43,33 @@ def get_delegations_for_agent(agent_id: UUID, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     return get_delegations(db, agent_id=agent_id)
 
+from app.api.dependencies import Principal, get_current_principal
+from app.api.authorization_dependency import authorize_action
+from pydantic import BaseModel
+
+class SensitiveOpResponse(BaseModel):
+    message: str
+    decision: dict
+
+@router.post("/{agent_id}/simulated-sensitive-op", response_model=SensitiveOpResponse)
+async def simulated_sensitive_op(
+    agent_id: UUID,
+    delegation_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
+):
+    # This policy rule requires:
+    # requires_delegation=True, required_capability="dpi.auth.issue"
+    # required_trust=0.8, max_recent_risk=0.1, max_uncertainty=0.2
+    decision = await authorize_action(
+        resource_type="verifiable_credential",
+        action_name="issue",
+        db=db,
+        principal=principal,
+        agent_id=agent_id,
+        delegation_id=delegation_id
+    )
+    return SensitiveOpResponse(
+        message="Simulated sensitive operation executed successfully.",
+        decision={"reason_code": decision.reason_code, "explanation": decision.explanation}
+    )
