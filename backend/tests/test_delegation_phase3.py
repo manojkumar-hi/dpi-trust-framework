@@ -26,6 +26,18 @@ def _signed_delegation_with_timestamps(*args, **kwargs):
     delegation.updated_at = datetime.now(timezone.utc)
     return delegation, organization, agent, organization_identity, agent_identity
 
+from app.api.dependencies import get_current_principal, Principal
+from fastapi import Request
+from uuid import UUID
+
+def mock_get_principal(request: Request):
+    org_id = request.headers.get("x-mock-principal-org-id")
+    if org_id:
+        return Principal(organization_id=UUID(org_id), subject="mock|mock")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="Unauthenticated: Principal required")
+
+app.dependency_overrides[get_current_principal] = mock_get_principal
 client = TestClient(app)
 
 @pytest.fixture
@@ -50,7 +62,7 @@ def override_get_db(test_db_session):
         yield test_db_session
     app.dependency_overrides[get_db] = _get_db
     yield
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_db, None)
 
 def _patch_fake_session_add():
     original_add = FakeSession.add

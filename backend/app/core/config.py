@@ -9,6 +9,13 @@ class Settings(BaseSettings):
     database_url: str
     fabric_adapter_url: str = "http://localhost:8081"
     fabric_adapter_timeout_seconds: float = 10.0
+    
+    # Module 13 Authentication Settings
+    auth_jwt_issuer: str = "https://auth.dpi-trust.local"
+    auth_jwt_audience: str = "dpi-trust-framework"
+    auth_jwks_url: str | None = None
+    auth_static_public_key: str | None = None  # For dev/test
+    auth_clock_skew_seconds: int = 60
 
     model_config = SettingsConfigDict(
         env_file=".env",

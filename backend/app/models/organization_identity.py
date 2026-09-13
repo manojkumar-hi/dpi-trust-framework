@@ -24,6 +24,8 @@ class OrganizationIdentity(Base):
     did: Mapped[str] = mapped_column(String(500), nullable=False, unique=True, index=True)
     public_key: Mapped[str] = mapped_column(String(500), nullable=False)
     key_algorithm: Mapped[str] = mapped_column(String(100), nullable=False, default="Ed25519")
+    authentication_issuer: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    authentication_subject: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

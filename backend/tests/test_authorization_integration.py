@@ -72,11 +72,23 @@ def override_get_db():
 
 @pytest.fixture(autouse=True)
 def setup_app_overrides():
+    original_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = override_get_db
     yield
-    if get_db in app.dependency_overrides:
-        del app.dependency_overrides[get_db]
+    app.dependency_overrides = original_overrides
 
+from app.api.dependencies import get_current_principal, Principal
+from fastapi import Request
+from uuid import UUID
+
+def mock_get_principal(request: Request):
+    org_id = request.headers.get("x-mock-principal-org-id")
+    if org_id:
+        return Principal(organization_id=UUID(org_id), subject="mock|mock")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="Unauthenticated: Principal required")
+
+app.dependency_overrides[get_current_principal] = mock_get_principal
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
