@@ -9,9 +9,12 @@ from app.api.dependencies import Principal
 from app.models.agent import Agent
 from app.models.agent_identity import AgentIdentity
 from app.models.delegation import Delegation
+from app.schemas.audit import AuditRecordCreate
+from app.services.audit_service import AuditService
 from app.services.trust_service import TrustService
 from app.services.authorization_engine import AuthorizationEngine
 from app.services.delegation_service import verify_delegation
+from app.database.connection import SessionLocal
 
 async def authorize_action(
     resource_type: str,
@@ -82,6 +85,38 @@ async def authorize_action(
     # 5. Pure Engine Evaluation
     decision = AuthorizationEngine.evaluate(input_data)
     
+    # Audit persistence using independent transaction
+    audit_db = SessionLocal()
+    try:
+        audit_record = AuditRecordCreate(
+            event_category="AUTHORIZATION",
+            event_type="authorization_evaluated",
+            actor_organization_id=principal.organization_id,
+            subject_agent_id=agent_id,
+            resource_type=resource_type,
+            action_requested=action_name,
+            authorization_decision="ALLOW" if decision.is_allowed else "DENY",
+            reason_code=decision.reason_code,
+            policy_id="default_policy",
+            trust_snapshot={
+                "t": trust_score.trust,
+                "u": trust_score.uncertainty,
+                "rr": trust_score.recent_risk
+            },
+            event_metadata={
+                "delegation_id": str(delegation_id) if delegation_id else None,
+                "capabilities": capabilities
+            }
+        )
+        AuditService.create_audit_record(audit_db, audit_record)
+        audit_db.commit()
+    except Exception:
+        audit_db.rollback()
+        # Fail closed on audit persistence failure
+        raise HTTPException(status_code=500, detail="Failed to persist authorization audit record")
+    finally:
+        audit_db.close()
+
     # 6. Enforcement
     if not decision.is_allowed:
         raise HTTPException(

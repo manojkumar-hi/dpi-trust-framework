@@ -328,9 +328,7 @@ def test_19_transaction_rollback(test_agent, test_org, monkeypatch):
     original_commit = Session.commit
     
     def mock_commit(self):
-        if any(type(obj).__name__ == "BehavioralEvidence" for obj in self.new):
-            raise Exception("Simulated DB Failure")
-        original_commit(self)
+        raise Exception("Simulated DB Failure")
 
     monkeypatch.setattr('sqlalchemy.orm.Session.commit', mock_commit)
 

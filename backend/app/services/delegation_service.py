@@ -27,6 +27,8 @@ from app.services.delegation_canonicalization import (
 )
 from app.services.fabric_ledger_client import FabricLedgerClient
 from app.services.organization_key_service import load_private_key
+from app.schemas.audit import AuditRecordCreate
+from app.services.audit_service import AuditService
 
 
 class DelegationError(Exception):
@@ -266,6 +268,21 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
             to_status="active",
             actor_did=organization_identity.did,
         )
+        
+        audit_record = AuditRecordCreate(
+            event_category="DELEGATION",
+            event_type="delegation_created",
+            actor_organization_id=organization.id,
+            actor_did=organization_identity.did,
+            subject_agent_id=agent.id,
+            resource_type="delegation",
+            resource_id=str(delegation.id),
+            event_metadata={
+                "fabric_transaction_id": delegation.fabric_transaction_id
+            }
+        )
+        AuditService.create_audit_record(db, audit_record)
+        
         db.commit()
     except Exception:
         db.rollback()
@@ -472,6 +489,21 @@ async def revoke_delegation(db: Session, principal: Principal, delegation_id: UU
         actor_did=delegation.delegator_did,
         reason=reason,
     )
+    
+    audit_record = AuditRecordCreate(
+        event_category="DELEGATION",
+        event_type="delegation_revoked",
+        actor_organization_id=delegation.delegator_organization_id,
+        actor_did=delegation.delegator_did,
+        subject_agent_id=delegation.delegatee_agent_id,
+        resource_type="delegation",
+        resource_id=str(delegation.id),
+        event_metadata={
+            "revocation_reason": reason
+        }
+    )
+    AuditService.create_audit_record(db, audit_record)
+    
     db.commit()
     db.refresh(delegation)
     return delegation

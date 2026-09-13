@@ -11,6 +11,8 @@ from app.models.agent import Agent
 from app.models.agent_trust_state import AgentTrustState
 from app.models.behavioral_evidence import BehavioralEvidence
 from app.schemas.trust import EvidenceIngestionRequest, TrustScoreResponse
+from app.schemas.audit import AuditRecordCreate
+from app.services.audit_service import AuditService
 
 
 class TrustService:
@@ -110,6 +112,35 @@ class TrustService:
             created_at=now
         )
         db.add(evidence)
+        
+        # 7. Audit Logging
+        # Subjective Logic math: r, s, b, d, u, t
+        r_current = trust_state.positive_evidence_r
+        s_current = trust_state.negative_evidence_s
+        denom = r_current + s_current + 2.0
+        u_val = 2.0 / denom
+        t_val = (r_current / denom) + 0.5 * u_val
+        
+        audit_record = AuditRecordCreate(
+            event_category="TRUST",
+            event_type="evidence_ingested",
+            actor_organization_id=principal_org_id,
+            subject_agent_id=agent_id,
+            resource_type="trust_evidence",
+            action_requested="ingest_evidence",
+            trust_snapshot={
+                "t": t_val,
+                "u": u_val,
+                "rr": None  # Optional to recalculate here, it relies on complex querying. We'll leave it out or provide dummy.
+            },
+            event_metadata={
+                "outcome": request.outcome,
+                "severity": request.severity,
+                "evidence_quality": request.evidence_quality,
+                "informative_value": request.informative_value
+            }
+        )
+        AuditService.create_audit_record(db, audit_record)
 
         # Triggers DB transaction commit
         db.commit()

@@ -51,6 +51,10 @@ async def patched_verify_delegation(db, delegation_id):
 def patch_delegation_service(monkeypatch):
     import app.api.authorization_dependency
     monkeypatch.setattr(app.api.authorization_dependency, "verify_delegation", patched_verify_delegation)
+    
+    # Mock SessionLocal entirely to prevent SQLite in-memory deadlock
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(app.api.authorization_dependency, "SessionLocal", MagicMock())
 
 engine = create_engine(
     "sqlite:///:memory:",
@@ -66,7 +70,13 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True)
+def setup_app_overrides():
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    if get_db in app.dependency_overrides:
+        del app.dependency_overrides[get_db]
+
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)

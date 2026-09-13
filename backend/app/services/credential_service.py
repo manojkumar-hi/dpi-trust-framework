@@ -19,6 +19,8 @@ from app.services.credential_canonicalization import (
 )
 from app.services.fabric_ledger_client import FabricLedgerClient
 from app.services.organization_key_service import load_private_key
+from app.schemas.audit import AuditRecordCreate
+from app.services.audit_service import AuditService
 
 
 class IssuerOrganizationNotFoundError(Exception):
@@ -137,6 +139,22 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
         finally:
             await fabric_client.close()
         credential.transaction_id = fabric_response.get("transaction_id")
+        
+        audit_record = AuditRecordCreate(
+            event_category="CREDENTIAL",
+            event_type="credential_issued",
+            actor_organization_id=credential.issuer_organization_id,
+            actor_did=issuer_identity.did,
+            subject_agent_id=credential.subject_agent_id,
+            resource_type="verifiable_credential",
+            resource_id=str(credential.id),
+            event_metadata={
+                "fabric_transaction_id": credential.transaction_id,
+                "credential_type": credential.credential_type
+            }
+        )
+        AuditService.create_audit_record(db, audit_record)
+        
         db.commit()
     except Exception:
         db.rollback()
@@ -195,6 +213,20 @@ def revoke_credential(
     credential.status = "revoked"
     credential.revoked_at = datetime.now(timezone.utc)
     credential.revocation_reason = reason
+    
+    audit_record = AuditRecordCreate(
+        event_category="CREDENTIAL",
+        event_type="credential_revoked",
+        actor_organization_id=credential.issuer_organization_id,
+        subject_agent_id=credential.subject_agent_id,
+        resource_type="verifiable_credential",
+        resource_id=str(credential.id),
+        event_metadata={
+            "revocation_reason": reason
+        }
+    )
+    AuditService.create_audit_record(db, audit_record)
+    
     db.commit()
     db.refresh(credential)
     return credential

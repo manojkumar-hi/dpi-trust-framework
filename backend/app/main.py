@@ -17,10 +17,12 @@ from app.api.organization_identity_resolution import (
 )
 from app.api.delegations import router as delegations_router
 from app.api.trust import router as trust_router
+from app.api.audit import router as audit_router
 from app.core.config import get_settings
 from app.database.base import Base
 from app.database.connection import engine
 from app.database.migrations import apply_development_migrations
+from app.middleware.correlation import CorrelationIdMiddleware
 
 settings = get_settings()
 
@@ -38,6 +40,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(CorrelationIdMiddleware)
+
 app.include_router(health_router)
 app.include_router(organizations_router)
 app.include_router(agents_router)
@@ -50,3 +54,4 @@ app.include_router(organization_key_management_router)
 app.include_router(organization_identity_resolution_router)
 app.include_router(delegations_router)
 app.include_router(trust_router)
+app.include_router(audit_router)
