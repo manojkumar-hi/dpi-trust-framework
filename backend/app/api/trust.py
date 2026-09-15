@@ -19,6 +19,9 @@ def get_trust_score(
     return TrustService.get_trust_score(db, agent_id=id)
 
 
+from app.services.idempotency_service import IdempotencyService
+from fastapi import Header
+
 @router.post(
     "/{id}/trust/evidence",
     response_model=EvidenceIngestionResponse,
@@ -29,12 +32,24 @@ def ingest_evidence(
     request: EvidenceIngestionRequest,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key")
 ):
+    if idempotency_key:
+        cached = IdempotencyService.check_and_lock_idempotency(
+            db, 
+            principal.organization_id, 
+            idempotency_key, 
+            f"/agents/{id}/trust/evidence", 
+            request.model_dump(mode="json")
+        )
+        if cached:
+            return EvidenceIngestionResponse(**cached)
+
     evidence = TrustService.ingest_evidence(
         db, agent_id=id, request=request, principal_org_id=principal.organization_id
     )
     
-    return EvidenceIngestionResponse(
+    response = EvidenceIngestionResponse(
         id=evidence.id,
         agent_id=evidence.agent_id,
         timestamp=evidence.timestamp,
@@ -44,3 +59,15 @@ def ingest_evidence(
         informative_value=evidence.informative_value,
         action_metadata=evidence.action_metadata,
     )
+
+    if idempotency_key:
+        IdempotencyService.update_idempotency_response(
+            db, 
+            principal.organization_id, 
+            idempotency_key, 
+            response.model_dump(mode="json"), 
+            201
+        )
+    
+    db.commit()
+    return response

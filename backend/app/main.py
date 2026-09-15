@@ -26,12 +26,15 @@ from app.middleware.correlation import CorrelationIdMiddleware
 
 settings = get_settings()
 
+from app.services.outbox_worker import outbox_worker
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     apply_development_migrations()
     Base.metadata.create_all(bind=engine)
+    outbox_worker.start()
     yield
+    await outbox_worker.stop()
 
 
 app = FastAPI(
@@ -42,7 +45,10 @@ app = FastAPI(
 
 app.add_middleware(CorrelationIdMiddleware)
 
+from app.api.did_web import router as did_web_router
+
 app.include_router(health_router)
+app.include_router(did_web_router)
 app.include_router(organizations_router)
 app.include_router(agents_router)
 app.include_router(credentials_router)

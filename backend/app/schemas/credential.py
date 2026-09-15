@@ -29,6 +29,8 @@ class CredentialResponse(BaseModel):
     proof_type: str | None
     signature: str | None
     signed_at: datetime | None
+    vc_jwt: str | None = None
+    kid: str | None = None
     transaction_id: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -48,6 +50,8 @@ class CredentialVerificationResponse(BaseModel):
     cryptographically_verified: bool
     signature_status: str
     proof_type: str | None
+    vc_jwt: str | None = None
+    kid: str | None = None
     valid: bool
     issued_at: datetime
     expires_at: datetime | None

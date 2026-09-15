@@ -10,12 +10,19 @@ from app.schemas.delegation import DelegationResponse
 from app.services.agent_service import create_agent, get_agent, get_agents
 from app.services.delegation_service import get_delegations
 from app.services.organization_service import get_organization
+from app.api.dependencies import Principal, get_current_principal
 
 router = APIRouter(prefix="/agents", tags=["Agent Registry"])
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
-def create_agent_endpoint(agent_data: AgentCreate, db: Session = Depends(get_db)) -> AgentResponse:
+def create_agent_endpoint(
+    agent_data: AgentCreate, 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
+) -> AgentResponse:
+    if principal.organization_id != agent_data.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create agents for this organization")
     if get_organization(db, agent_data.organization_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     return create_agent(db, agent_data)

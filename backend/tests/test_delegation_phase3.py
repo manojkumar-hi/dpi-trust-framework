@@ -36,8 +36,6 @@ def mock_get_principal(request: Request):
         return Principal(organization_id=UUID(org_id), subject="mock|mock")
     from fastapi import HTTPException
     raise HTTPException(status_code=401, detail="Unauthenticated: Principal required")
-
-app.dependency_overrides[get_current_principal] = mock_get_principal
 client = TestClient(app)
 
 @pytest.fixture
@@ -56,13 +54,15 @@ def test_db_session():
     session.private_key = private_key
     return session
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def override_get_db(test_db_session):
     def _get_db():
         yield test_db_session
     app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_current_principal] = mock_get_principal
     yield
     app.dependency_overrides.pop(get_db, None)
+    app.dependency_overrides.pop(get_current_principal, None)
 
 def _patch_fake_session_add():
     original_add = FakeSession.add

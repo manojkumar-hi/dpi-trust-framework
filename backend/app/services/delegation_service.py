@@ -29,6 +29,7 @@ from app.services.fabric_ledger_client import FabricLedgerClient
 from app.services.organization_key_service import load_private_key
 from app.schemas.audit import AuditRecordCreate
 from app.services.audit_service import AuditService
+from app.models.outbox import OutboxEvent
 
 
 class DelegationError(Exception):
@@ -245,20 +246,23 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
                 )
             )
         
-        fabric_client = FabricLedgerClient()
-        try:
-            fabric_response = await fabric_client.issue_delegation(
-                delegation_id=delegation.id,
-                delegator_did=delegation.delegator_did,
-                delegatee_did=delegation.delegatee_did,
-                canonical_hash=delegation.canonical_hash,
-                issued_at=delegation.signed_at,
-                expires_at=delegation.expires_at,
-            )
-        finally:
-            await fabric_client.close()
+        outbox_event = OutboxEvent(
+            id=str(uuid4()),
+            event_type="DELEGATION_ISSUED",
+            aggregate_id=str(delegation.id),
+            payload={
+                "delegationId": str(delegation.id),
+                "delegatorDid": delegation.delegator_did,
+                "delegateeDid": delegation.delegatee_did,
+                "canonicalHash": delegation.canonical_hash,
+                "issuedAt": delegation.signed_at.isoformat(),
+                "expiresAt": delegation.expires_at.isoformat() if delegation.expires_at else None,
+            }
+        )
+        db.add(outbox_event)
         
-        delegation.fabric_transaction_id = fabric_response.get("transaction_id")
+        # Async anchoring pending
+        delegation.fabric_transaction_id = None
         
         _add_event(
             db,
@@ -278,12 +282,14 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
             resource_type="delegation",
             resource_id=str(delegation.id),
             event_metadata={
-                "fabric_transaction_id": delegation.fabric_transaction_id
+                "fabric_transaction_id": None, # Async anchoring pending
+                "delegator_did": delegation.delegator_did,
+                "delegatee_did": delegation.delegatee_did
             }
         )
         AuditService.create_audit_record(db, audit_record)
         
-        db.commit()
+        db.flush()
     except Exception:
         db.rollback()
         raise
@@ -466,16 +472,18 @@ async def revoke_delegation(db: Session, principal: Principal, delegation_id: UU
     revoked_at = _utc_now()
     validate_revocation_state("revoked", revoked_at, reason)
     
-    fabric_client = FabricLedgerClient()
-    try:
-        await fabric_client.revoke_delegation(
-            delegation_id=delegation.id,
-            reason=reason,
-            revoked_at=revoked_at,
-        )
-    finally:
-        await fabric_client.close()
-
+    # Remove sync Fabric anchoring; create outbox event instead
+    outbox_event = OutboxEvent(
+        id=str(uuid4()),
+        event_type="DELEGATION_REVOKED",
+        aggregate_id=str(delegation.id),
+        payload={
+            "delegationId": str(delegation.id),
+            "reason": reason,
+            "revokedAt": revoked_at.isoformat(),
+        }
+    )
+    db.add(outbox_event)
     previous_status = delegation.status
     delegation.status = "revoked"
     delegation.revoked_at = revoked_at

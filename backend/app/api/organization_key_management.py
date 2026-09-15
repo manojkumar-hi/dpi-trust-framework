@@ -17,14 +17,20 @@ from app.services.organization_key_service import private_key_path
 router = APIRouter(prefix="/organizations", tags=["Organization Key Management"])
 
 
+from app.api.dependencies import Principal, get_current_principal
+
 @router.post(
     "/{organization_id}/identity/rekey",
     response_model=OrganizationIdentityResponse,
     responses={404: {"description": "Organization or identity not found"}},
 )
 def rekey_identity(
-    organization_id: UUID = Path(...), db: Session = Depends(get_db)
+    organization_id: UUID = Path(...), 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
 ) -> OrganizationIdentityResponse:
+    if principal.organization_id != organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to rekey this organization")
     try:
         return rekey_organization_identity(db, organization_id)
     except OrganizationNotFoundError as exc:

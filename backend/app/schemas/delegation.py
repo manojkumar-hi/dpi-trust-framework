@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class DelegationCapabilityCreate(BaseModel):
@@ -22,7 +22,7 @@ class DelegationCreate(BaseModel):
 
 
 class DelegationCapabilityResponse(DelegationCapabilityCreate):
-    pass
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DelegationEventResponse(BaseModel):
@@ -37,7 +37,9 @@ class DelegationEventResponse(BaseModel):
     occurred_at: datetime
 
 
+
 class DelegationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: UUID
     delegator_organization_id: UUID
     delegatee_agent_id: UUID

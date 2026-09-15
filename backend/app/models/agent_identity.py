@@ -10,6 +10,7 @@ from app.database.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
+    from app.models.agent_identity_key import AgentIdentityKey
 
 
 class AgentIdentity(Base):
@@ -21,8 +22,8 @@ class AgentIdentity(Base):
         PostgreSQLUUID(as_uuid=True), ForeignKey("agents.id"), nullable=False
     )
     did: Mapped[str] = mapped_column(String(500), nullable=False, unique=True, index=True)
-    public_key: Mapped[str] = mapped_column(Text, nullable=False)
-    key_algorithm: Mapped[str] = mapped_column(String(100), nullable=False, default="Ed25519")
+    public_key: Mapped[str | None] = mapped_column(Text, nullable=True) # Legacy column, to be removed after migration
+    key_algorithm: Mapped[str | None] = mapped_column(String(100), nullable=True) # Legacy column, to be removed after migration
     authentication_issuer: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     authentication_subject: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
@@ -32,3 +33,8 @@ class AgentIdentity(Base):
     )
 
     agent: Mapped["Agent"] = relationship(back_populates="identity")
+    keys: Mapped[list["AgentIdentityKey"]] = relationship(
+        back_populates="agent_identity",
+        cascade="all, delete-orphan",
+        order_by="AgentIdentityKey.created_at",
+    )

@@ -10,6 +10,8 @@ from app.schemas.credential import (
     CredentialRevokeRequest,
     CredentialVerificationResponse,
 )
+from app.schemas.vc_verification import VCVerifyRequest, VCVerificationResult
+from app.services.vc_verification_service import verify_vc_jwt
 from app.services.credential_service import (
     CredentialAlreadyRevokedError,
     CredentialNotFoundError,
@@ -28,6 +30,10 @@ from app.services.credential_service import (
 router = APIRouter(prefix="/credentials", tags=["Verifiable Credentials"])
 
 
+from app.api.dependencies import Principal, get_current_principal
+from app.services.idempotency_service import IdempotencyService
+from fastapi import Header
+
 @router.post(
     "",
     response_model=CredentialResponse,
@@ -38,10 +44,38 @@ router = APIRouter(prefix="/credentials", tags=["Verifiable Credentials"])
     },
 )
 async def issue_credential(
-    credential_data: CredentialCreate, db: Session = Depends(get_db)
+    credential_data: CredentialCreate, 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key")
 ) -> CredentialResponse:
+    if principal.organization_id != credential_data.issuer_organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to issue credentials for this organization")
+    
+    if idempotency_key:
+        cached = IdempotencyService.check_and_lock_idempotency(
+            db, 
+            principal.organization_id, 
+            idempotency_key, 
+            "/credentials", 
+            credential_data.model_dump(mode="json")
+        )
+        if cached:
+            return CredentialResponse(**cached)
+
     try:
-        return await create_credential(db, credential_data)
+        db_response = await create_credential(db, credential_data)
+        response = CredentialResponse.model_validate(db_response)
+        if idempotency_key:
+            IdempotencyService.update_idempotency_response(
+                db, 
+                principal.organization_id, 
+                idempotency_key, 
+                response.model_dump(mode="json"), 
+                201
+            )
+            db.commit()
+        return response
     except IssuerOrganizationNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Issuer organization not found") from exc
     except SubjectAgentNotFoundError as exc:
@@ -85,12 +119,29 @@ def retrieve_credential(credential_id: UUID, db: Session = Depends(get_db)) -> C
     responses={404: {"description": "Credential not found"}},
 )
 def verify_credential_record(
-    credential_id: UUID, db: Session = Depends(get_db)
+    credential_id: UUID, db: Session = Depends(get_db),
 ) -> CredentialVerificationResponse:
     try:
         return verify_credential(db, credential_id)
     except CredentialNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Credential not found") from exc
+
+
+@router.post(
+    "/verify",
+    response_model=VCVerificationResult,
+    summary="Verify a portable vc+jwt artifact",
+    description=(
+        "Artifact-first VC verification. Accepts a raw vc+jwt string and returns a "
+        "structured verification result. Does not require the caller to know the internal "
+        "credential UUID. Authentication is not required to verify a public VC artifact."
+    ),
+)
+def verify_vc_jwt_artifact(
+    request: VCVerifyRequest,
+    db: Session = Depends(get_db),
+) -> VCVerificationResult:
+    return verify_vc_jwt(request.vc_jwt, db)
 
 
 @router.post(
@@ -105,7 +156,11 @@ def revoke_credential_record(
     credential_id: UUID,
     request: CredentialRevokeRequest,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
 ) -> CredentialResponse:
+    credential = get_credential(db, credential_id)
+    if credential and principal.organization_id != credential.issuer_organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to revoke this credential")
     try:
         return revoke_credential(db, credential_id, request.reason)
     except CredentialNotFoundError as exc:

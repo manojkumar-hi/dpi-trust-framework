@@ -17,7 +17,13 @@ from app.services.delegation_service import get_delegations
 router = APIRouter(prefix="/organizations", tags=["Organization Registry"])
 
 
-@router.post("", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=OrganizationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new Organization (Bootstrap Operation)",
+    description="This is an unauthenticated registry setup operation. In production, this boundary must be restricted at the infrastructure or API-gateway layer."
+)
 def create_organization_endpoint(
     organization_data: OrganizationCreate, db: Session = Depends(get_db)
 ) -> OrganizationResponse:

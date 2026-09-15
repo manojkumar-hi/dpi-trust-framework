@@ -18,10 +18,14 @@ class TrustLedgerContract extends Contract {
         credentialHash,
         issuedAt
     ) {
-        const exists = await this.CredentialExists(ctx, credentialId);
+        const credentialBytes = await ctx.stub.getState(credentialId);
 
-        if (exists) {
-            throw new Error(`Credential ${credentialId} already exists`);
+        if (credentialBytes && credentialBytes.length > 0) {
+            const existing = JSON.parse(credentialBytes.toString());
+            if (existing.credential_hash === credentialHash) {
+                return JSON.stringify(existing);
+            }
+            throw new Error(`Credential ${credentialId} already exists with a different hash`);
         }
 
         const credential = {
@@ -113,7 +117,10 @@ class TrustLedgerContract extends Contract {
         const credential = JSON.parse(credentialBytes.toString());
 
         if (credential.status === 'revoked') {
-            throw new Error(`Credential ${credentialId} is already revoked`);
+            if (credential.revocation_reason === revocationReason && credential.revoked_at === revokedAt) {
+                return JSON.stringify(credential);
+            }
+            throw new Error(`Credential ${credentialId} is already revoked with a different reason or timestamp`);
         }
 
         credential.status = 'revoked';
@@ -280,7 +287,10 @@ class TrustLedgerContract extends Contract {
         const delegation = JSON.parse(bytes.toString());
 
         if (delegation.status === 'revoked') {
-            return JSON.stringify(delegation);
+            if (delegation.revocation_reason === revocationReason && delegation.revoked_at === revokedAt) {
+                return JSON.stringify(delegation);
+            }
+            throw new Error(`Delegation ${delegationId} is already revoked with a different reason or timestamp`);
         }
 
         delegation.status = 'revoked';

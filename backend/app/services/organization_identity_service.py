@@ -23,8 +23,8 @@ class OrganizationIdentityAlreadyExistsError(Exception):
     pass
 
 
-def generate_organization_did(organization_id: UUID) -> str:
-    return f"did:dpi:org:{organization_id}"
+def generate_organization_did(domain: str) -> str:
+    return f"did:web:{domain}"
 
 
 def get_organization(db: Session, organization_id: UUID) -> Organization | None:
@@ -50,7 +50,8 @@ def get_organization_identity(
 def create_organization_identity(
     db: Session, organization_id: UUID
 ) -> OrganizationIdentity:
-    if get_organization(db, organization_id) is None:
+    organization = get_organization(db, organization_id)
+    if organization is None:
         raise OrganizationNotFoundError
     if db.scalar(
         select(OrganizationIdentity).where(
@@ -64,7 +65,7 @@ def create_organization_identity(
     now = datetime.now(timezone.utc)
     identity = OrganizationIdentity(
         organization_id=organization_id,
-        did=generate_organization_did(organization_id),
+        did=generate_organization_did(organization.domain),
         public_key=base64.b64encode(public_key).decode("ascii"),
     )
     identity.keys.append(
@@ -128,33 +129,48 @@ def rekey_organization_identity(
 def resolve_organization_did(
     db: Session, did: str
 ) -> DIDResolutionResponse | None:
+    from sqlalchemy.orm import selectinload
     identity = db.scalar(
-        select(OrganizationIdentity).where(OrganizationIdentity.did == did)
+        select(OrganizationIdentity)
+        .options(selectinload(OrganizationIdentity.keys))
+        .where(OrganizationIdentity.did == did)
     )
     if identity is None:
         return None
 
-    active_key = next(
-        (key for key in identity.keys if key.status == "active"),
-        None,
-    )
-    verification_method_id = (
-        active_key.verification_method if active_key is not None else f"{identity.did}#key-1"
-    )
-    public_key = active_key.public_key if active_key is not None else identity.public_key
+    verification_methods = []
+    authentication_methods = []
+    
+    # Sort keys for deterministic output, retired keys still go in verification_methods
+    for key in sorted(identity.keys, key=lambda k: k.created_at):
+        vm = {
+            "id": key.verification_method,
+            "type": "Ed25519VerificationKey2020",
+            "controller": identity.did,
+            "publicKeyBase64": key.public_key,
+        }
+        verification_methods.append(vm)
+        if key.status == "active":
+            authentication_methods.append(key.verification_method)
+
+    # Legacy fallback if no keys exist (should not happen in prod after migration)
+    if not verification_methods:
+        vm_id = f"{identity.did}#key-1"
+        verification_methods.append({
+            "id": vm_id,
+            "type": "Ed25519VerificationKey2020",
+            "controller": identity.did,
+            "publicKeyBase64": identity.public_key,
+        })
+        authentication_methods.append(vm_id)
+
     return DIDResolutionResponse(
         **{
             "@context": ["https://www.w3.org/ns/did/v1"],
             "id": identity.did,
-            "verificationMethod": [
-                {
-                    "id": verification_method_id,
-                    "type": "Ed25519VerificationKey2020",
-                    "controller": identity.did,
-                    "publicKeyBase64": public_key,
-                }
-            ],
-            "authentication": [verification_method_id],
+            "verificationMethod": verification_methods,
+            "authentication": authentication_methods,
+            "assertionMethod": authentication_methods, # Same active keys for assertions
             "status": identity.status,
         }
     )

@@ -15,6 +15,8 @@ from app.services.identity_service import (
 router = APIRouter(prefix="/agents", tags=["Agent Identity"])
 
 
+from app.api.dependencies import Principal, get_current_principal
+
 @router.post(
     "/{agent_id}/identity",
     response_model=AgentIdentityResponse,
@@ -25,10 +27,15 @@ router = APIRouter(prefix="/agents", tags=["Agent Identity"])
     },
 )
 def create_agent_identity(
-    agent_id: UUID = Path(...), db: Session = Depends(get_db)
+    agent_id: UUID = Path(...), 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
 ) -> AgentIdentityResponse:
-    if get_agent(db, agent_id) is None:
+    agent = get_agent(db, agent_id)
+    if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if principal.organization_id != agent.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create identity for this agent")
     try:
         return create_identity(db, agent_id)
     except IdentityAlreadyExistsError as exc:

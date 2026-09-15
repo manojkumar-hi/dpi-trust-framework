@@ -7,3 +7,4 @@ pydantic-settings
 cryptography
 httpx
 pytest
+PyJWT[crypto]

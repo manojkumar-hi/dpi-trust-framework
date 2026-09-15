@@ -28,14 +28,41 @@ from app.services.delegation_service import (
 router = APIRouter(prefix="/delegations", tags=["Delegation Management"])
 
 
+from app.services.idempotency_service import IdempotencyService
+from fastapi import Header
+
 @router.post("", response_model=DelegationResponse, status_code=status.HTTP_201_CREATED)
 async def create_delegation_endpoint(
     delegation_data: DelegationCreate,
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key")
 ) -> DelegationResponse:
+    if idempotency_key:
+        cached = IdempotencyService.check_and_lock_idempotency(
+            db, 
+            principal.organization_id, 
+            idempotency_key, 
+            "/delegations", 
+            delegation_data.model_dump(mode="json")
+        )
+        if cached:
+            return DelegationResponse(**cached)
+
     try:
-        return await create_delegation(db, principal, delegation_data)
+        db_response = await create_delegation(db, principal, delegation_data)
+        response = DelegationResponse.model_validate(db_response)
+        if idempotency_key:
+            IdempotencyService.update_idempotency_response(
+                db, 
+                principal.organization_id, 
+                idempotency_key, 
+                response.model_dump(mode="json"), 
+                201
+            )
+        
+        db.commit()
+        return response
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except InvalidDelegationError as exc:

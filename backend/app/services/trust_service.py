@@ -142,8 +142,8 @@ class TrustService:
         )
         AuditService.create_audit_record(db, audit_record)
 
-        # Triggers DB transaction commit
-        db.commit()
+        # Triggers DB flush (let API route commit)
+        db.flush()
         db.refresh(evidence)
 
         return evidence

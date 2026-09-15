@@ -21,7 +21,8 @@ from app.services.fabric_ledger_client import FabricLedgerClient
 from app.services.organization_key_service import load_private_key
 from app.schemas.audit import AuditRecordCreate
 from app.services.audit_service import AuditService
-
+from app.models.outbox import OutboxEvent
+from uuid import uuid4
 
 class IssuerOrganizationNotFoundError(Exception):
     pass
@@ -78,15 +79,18 @@ def mark_expired(db: Session, credential: VerifiableCredential) -> None:
         db.refresh(credential)
 
 
+import jwt
+from sqlalchemy.orm import selectinload
+
 async def create_credential(db: Session, credential_data: CredentialCreate) -> VerifiableCredential:
     if get_organization(db, credential_data.issuer_organization_id) is None:
         raise IssuerOrganizationNotFoundError
     if get_agent(db, credential_data.subject_agent_id) is None:
         raise SubjectAgentNotFoundError
     issuer_identity = db.scalar(
-        select(OrganizationIdentity).where(
-            OrganizationIdentity.organization_id == credential_data.issuer_organization_id
-        )
+        select(OrganizationIdentity)
+        .options(selectinload(OrganizationIdentity.keys))
+        .where(OrganizationIdentity.organization_id == credential_data.issuer_organization_id)
     )
     if issuer_identity is None:
         raise IssuerIdentityNotFoundError
@@ -95,6 +99,12 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
     )
     if subject_identity is None:
         raise SubjectIdentityNotFoundError
+    
+    active_key = next((k for k in issuer_identity.keys if k.status == "active"), None)
+    if not active_key:
+        raise OrganizationSigningKeyUnavailableError("No active signing key found for issuer")
+    kid = active_key.verification_method
+
     private_key = load_private_key(credential_data.issuer_organization_id)
     if private_key is None:
         raise OrganizationSigningKeyUnavailableError
@@ -105,6 +115,8 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
         db.flush()
         if credential.issued_at is None:
             credential.issued_at = datetime.now(timezone.utc)
+            
+        # Legacy signature
         signed_bytes = canonical_credential_bytes(
             credential.id,
             credential.issuer_organization_id,
@@ -117,6 +129,33 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
         credential.proof_type = "Ed25519Signature2020"
         credential.signature = base64.b64encode(private_key.sign(signed_bytes)).decode("ascii")
         credential.signed_at = datetime.now(timezone.utc)
+        
+        # W3C vc+jwt
+        vc_payload = {
+            "iss": issuer_identity.did,
+            "sub": subject_identity.did,
+            "jti": str(credential.id),
+            "iat": int(credential.issued_at.timestamp()),
+            "vc": {
+                "@context": ["https://www.w3.org/2018/credentials/v1"],
+                "type": ["VerifiableCredential", credential.credential_type],
+                "credentialSubject": {
+                    "id": subject_identity.did,
+                    **credential.credential_data
+                }
+            }
+        }
+        if credential.expires_at:
+            vc_payload["exp"] = int(credential.expires_at.timestamp())
+
+        credential.kid = kid
+        credential.vc_jwt = jwt.encode(
+            vc_payload, 
+            private_key, 
+            algorithm="EdDSA", 
+            headers={"kid": kid}
+        )
+
         credential_hash_value = credential_hash(
             credential.id,
             credential.issuer_organization_id,
@@ -126,19 +165,23 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
             credential.issued_at,
             credential.expires_at,
         )
-        fabric_client = FabricLedgerClient()
-        try:
-            fabric_response = await fabric_client.issue_credential(
-                credential_id=credential.id,
-                credential_type=credential.credential_type,
-                issuer_did=issuer_identity.did,
-                subject_did=subject_identity.did,
-                credential_hash=credential_hash_value,
-                issued_at=credential.issued_at,
-            )
-        finally:
-            await fabric_client.close()
-        credential.transaction_id = fabric_response.get("transaction_id")
+        
+        outbox_event = OutboxEvent(
+            id=str(uuid4()),
+            event_type="CREDENTIAL_ISSUED",
+            aggregate_id=str(credential.id),
+            payload={
+                "credentialId": str(credential.id),
+                "credentialType": credential.credential_type,
+                "issuerDid": issuer_identity.did,
+                "subjectDid": subject_identity.did,
+                "credentialHash": credential_hash_value,
+                "issuedAt": credential.issued_at.isoformat(),
+            }
+        )
+        db.add(outbox_event)
+        
+        credential.transaction_id = None
         
         audit_record = AuditRecordCreate(
             event_category="CREDENTIAL",
@@ -149,7 +192,7 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
             resource_type="verifiable_credential",
             resource_id=str(credential.id),
             event_metadata={
-                "fabric_transaction_id": credential.transaction_id,
+                "fabric_transaction_id": None,
                 "credential_type": credential.credential_type
             }
         )
@@ -227,6 +270,18 @@ def revoke_credential(
     )
     AuditService.create_audit_record(db, audit_record)
     
+    outbox_event = OutboxEvent(
+        id=str(uuid4()),
+        event_type="CREDENTIAL_REVOKED",
+        aggregate_id=str(credential.id),
+        payload={
+            "credentialId": str(credential.id),
+            "reason": reason,
+            "revokedAt": credential.revoked_at.isoformat(),
+        }
+    )
+    db.add(outbox_event)
+    
     db.commit()
     db.refresh(credential)
     return credential
@@ -242,9 +297,9 @@ def verify_credential(
     issuer = get_organization(db, credential.issuer_organization_id)
     subject = get_agent(db, credential.subject_agent_id)
     issuer_identity = db.scalar(
-        select(OrganizationIdentity).where(
-            OrganizationIdentity.organization_id == credential.issuer_organization_id
-        )
+        select(OrganizationIdentity)
+        .options(selectinload(OrganizationIdentity.keys))
+        .where(OrganizationIdentity.organization_id == credential.issuer_organization_id)
     )
     subject_identity = db.scalar(
         select(AgentIdentity).where(AgentIdentity.agent_id == credential.subject_agent_id)
@@ -269,7 +324,51 @@ def verify_credential(
 
     cryptographically_verified = False
     signature_status = "unsigned"
-    if credential.signature is not None and credential.proof_type is not None:
+    
+    if credential.vc_jwt is not None:
+        try:
+            unverified_header = jwt.get_unverified_header(credential.vc_jwt)
+            kid = unverified_header.get("kid")
+            if not kid:
+                signature_status = "invalid"
+            else:
+                signing_key_record = next((k for k in issuer_identity.keys if k.verification_method == kid), None) if issuer_identity else None
+                if not signing_key_record:
+                    signature_status = "invalid"
+                else:
+                    # Check historical bounds
+                    if signing_key_record.valid_from > credential.issued_at:
+                        signature_status = "invalid"
+                    elif signing_key_record.valid_until is not None and signing_key_record.valid_until < credential.issued_at:
+                        signature_status = "invalid"
+                    else:
+                        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(signing_key_record.public_key))
+                        payload = jwt.decode(
+                            credential.vc_jwt,
+                            public_key,
+                            algorithms=["EdDSA"],
+                            issuer=issuer_identity.did if issuer_identity else None,
+                            subject=subject_identity.did if subject_identity else None
+                        )
+                        # Ensure jti matches credential ID
+                        if payload.get("jti") != str(credential.id):
+                            signature_status = "invalid"
+                        else:
+                            # Verify credentialSubject id
+                            vc_claim = payload.get("vc", {})
+                            cred_subject = vc_claim.get("credentialSubject", {})
+                            if cred_subject.get("id") != subject_identity.did if subject_identity else None:
+                                signature_status = "invalid"
+                            else:
+                                cryptographically_verified = True
+                                signature_status = "valid"
+        except jwt.ExpiredSignatureError:
+            signature_status = "expired"
+            cryptographically_verified = True # Signature was valid, but expired. Lifecycle check already handles expiry message.
+        except jwt.InvalidTokenError:
+            signature_status = "invalid"
+            
+    elif credential.signature is not None and credential.proof_type is not None:
         try:
             signed_bytes = canonical_credential_bytes(
                 credential.id,
@@ -306,6 +405,8 @@ def verify_credential(
         cryptographically_verified=cryptographically_verified,
         signature_status=signature_status,
         proof_type=credential.proof_type,
+        vc_jwt=credential.vc_jwt,
+        kid=credential.kid,
         valid=lifecycle_valid and cryptographically_verified,
         issued_at=credential.issued_at,
         expires_at=credential.expires_at,

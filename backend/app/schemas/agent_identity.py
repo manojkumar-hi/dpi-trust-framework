@@ -10,8 +10,8 @@ class AgentIdentityResponse(BaseModel):
     id: UUID
     agent_id: UUID
     did: str
-    public_key: str
-    key_algorithm: str
+    public_key: str | None = None
+    key_algorithm: str | None = None
     status: str
     created_at: datetime
     updated_at: datetime
@@ -31,6 +31,7 @@ class DIDResolutionResponse(BaseModel):
     id: str
     verification_method: list[VerificationMethod] = Field(alias="verificationMethod")
     authentication: list[str]
+    assertion_method: list[str] = Field(alias="assertionMethod", default_factory=list)
     status: str
 
     model_config = ConfigDict(populate_by_name=True)
