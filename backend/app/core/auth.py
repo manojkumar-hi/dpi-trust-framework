@@ -142,11 +142,39 @@ class JWTValidator:
             raise AuthError(TOKEN_SIGNATURE_INVALID, "Invalid signature")
         except jwt.PyJWTError as e:
             raise AuthError(TOKEN_MALFORMED, str(e))
-            
+
         sub = payload.get("sub")
         if not sub:
             raise AuthError(MISSING_SUBJECT, "Token must contain a 'sub' claim")
 
         return payload
 
+class JWTIssuer:
+    def __init__(self):
+        self.settings = get_settings()
+
+    def issue_token(self, subject: str, org_id: str, agent_id: str | None = None, expires_in_seconds: int = 3600) -> str:
+        if not self.settings.auth_static_private_key:
+            raise RuntimeError("auth_static_private_key is not configured")
+
+        private_key = serialization.load_pem_private_key(
+            self.settings.auth_static_private_key.encode(),
+            password=None
+        )
+
+        now = int(time.time())
+        payload = {
+            "iss": self.settings.auth_jwt_issuer,
+            "aud": self.settings.auth_jwt_audience,
+            "sub": subject,
+            "dpi_org_id": org_id,
+            "iat": now,
+            "exp": now + expires_in_seconds
+        }
+        if agent_id:
+            payload["dpi_agent_id"] = agent_id
+
+        return jwt.encode(payload, private_key, algorithm="RS256")
+
 validator = JWTValidator()
+issuer = JWTIssuer()

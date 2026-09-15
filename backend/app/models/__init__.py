@@ -13,6 +13,7 @@ from app.models.verifiable_credential import VerifiableCredential
 from app.models.audit_record import AuditRecord
 from app.models.idempotency import IdempotencyRecord
 from app.models.outbox import OutboxEvent
+from app.models.challenge import Challenge
 
 __all__ = [
     "Agent",
@@ -30,4 +31,5 @@ __all__ = [
     "OrganizationIdentityKey",
     "VerifiableCredential",
     "OutboxEvent",
+    "Challenge",
 ]

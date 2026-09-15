@@ -273,7 +273,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
         if (
             local_credential.status == "active"
             and local_credential.expires_at is not None
-            and local_credential.expires_at <= now
+            and _ensure_utc(local_credential.expires_at) <= now
         ):
             local_credential.status = "expired"
             try:
