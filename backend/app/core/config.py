@@ -20,6 +20,9 @@ class Settings(BaseSettings):
 
     # Module 15.4 Verifier Identity
     verifier_did: str = "did:web:trust.dpi.local"
+    
+    # Module 17 / Cross-Org Resolution
+    did_web_domain: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

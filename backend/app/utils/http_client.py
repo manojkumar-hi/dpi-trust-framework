@@ -107,3 +107,11 @@ def fetch_status_list_artifact(url: str, max_size_bytes: int = 2 * 1024 * 1024, 
         raise
     except Exception as e:
         raise HTTPClientError("HTTP request failed") from e
+
+def fetch_json_artifact(url: str, max_size_bytes: int = 1048576, timeout_sec: float = 5.0) -> bytes:
+    """
+    Fetches an external JSON artifact (e.g. did.json) with strict SSRF and size bounds.
+    Returns the raw bytes of the response body.
+    """
+    # Simply reuse the existing SSRF-safe implementation, adjusting max size to 1MB default
+    return fetch_status_list_artifact(url, max_size_bytes=max_size_bytes, timeout_sec=timeout_sec)

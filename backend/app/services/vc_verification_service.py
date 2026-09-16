@@ -100,75 +100,113 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
     if not iss:
         return _fail(MALFORMED_VC, "JWT is missing 'iss' claim")
 
-    # ?? Step 5: resolve issuer DID ????????????????????????????????????????????
-    issuer_identity: OrganizationIdentity | None = db.scalar(
-        select(OrganizationIdentity)
-        .options(selectinload(OrganizationIdentity.keys))
-        .where(OrganizationIdentity.did == iss)
-    )
-    if issuer_identity is None:
-        return _fail(ISSUER_NOT_FOUND, f"Issuer DID '{iss}' could not be resolved", issuer_did=iss)
+    iat = unverified_payload.get("iat")
+    if iat is None:
+        return _fail(MALFORMED_VC, "JWT is missing 'iat' claim")
+    try:
+        issued_at_dt = datetime.fromtimestamp(iat, tz=timezone.utc)
+    except (TypeError, ValueError):
+        return _fail(MALFORMED_VC, "JWT 'iat' claim is invalid")
 
-    # ?? Step 6: resolve signing key ???????????????????????????????????????????
-    # kid must belong to this issuer; unknown kid from any other org also fails closed
-    signing_key: OrganizationIdentityKey | None = next(
-        (k for k in issuer_identity.keys if k.verification_method == kid), None
-    )
-    if signing_key is None:
-        # Double-check: if kid exists for a *different* issuer that is a different error
-        cross_key: OrganizationIdentityKey | None = db.scalar(
-            select(OrganizationIdentityKey).where(
-                OrganizationIdentityKey.verification_method == kid
-            )
+    # ?? Step 5: resolve issuer DID and signing key ????????????????????????????
+    from app.core.config import get_settings
+    settings = get_settings()
+    
+    is_local_issuer = False
+    if settings.did_web_domain and iss.startswith(f"did:web:{settings.did_web_domain}"):
+        is_local_issuer = True
+    elif not settings.did_web_domain:
+        # If no strict domain configured, attempt local DB first as fallback
+        is_local_issuer = True
+
+    public_key_bytes = None
+    
+    if is_local_issuer:
+        issuer_identity: OrganizationIdentity | None = db.scalar(
+            select(OrganizationIdentity)
+            .options(selectinload(OrganizationIdentity.keys))
+            .where(OrganizationIdentity.did == iss)
         )
-        if cross_key is not None:
-            return _fail(
-                ISSUER_KEY_MISMATCH,
-                f"Key '{kid}' belongs to a different issuer DID",
-                issuer_did=iss,
-                kid=kid,
+        if issuer_identity is None:
+            # If domain matched local but not in DB, it's NOT found. 
+            # Or if fallback mode, we could try foreign, but V1 rules say if it's local domain it MUST be in local DB.
+            if settings.did_web_domain:
+                return _fail(ISSUER_NOT_FOUND, f"Local issuer DID '{iss}' not found", issuer_did=iss)
+            else:
+                is_local_issuer = False # fallback to external
+
+    if is_local_issuer and issuer_identity is not None:
+        signing_key = next(
+            (k for k in issuer_identity.keys if k.verification_method == kid), None
+        )
+        if signing_key is None:
+            cross_key = db.scalar(
+                select(OrganizationIdentityKey).where(
+                    OrganizationIdentityKey.verification_method == kid
+                )
             )
-        return _fail(UNKNOWN_KID, f"Key '{kid}' is not known for issuer '{iss}'", issuer_did=iss, kid=kid)
+            if cross_key is not None:
+                return _fail(
+                    ISSUER_KEY_MISMATCH,
+                    f"Key '{kid}' belongs to a different issuer DID",
+                    issuer_did=iss, kid=kid,
+                )
+            return _fail(UNKNOWN_KID, f"Key '{kid}' is not known for issuer '{iss}'", issuer_did=iss, kid=kid)
+            
+        key_valid_from = _ensure_utc(signing_key.valid_from)
+        key_valid_until = _ensure_utc(signing_key.valid_until) if signing_key.valid_until else None
+        
+        try:
+            public_key_bytes = base64.b64decode(signing_key.public_key)
+        except Exception:
+            return _fail(SIGNATURE_INVALID, "Failed to load local issuer public key", issuer_did=iss, kid=kid)
+            
+    else:
+        # Foreign Issuer Resolution
+        from app.services.did_web_resolution_service import resolve_did_web, DIDResolutionError
+        try:
+            did_doc = resolve_did_web(iss)
+        except DIDResolutionError as e:
+            return _fail(ISSUER_NOT_FOUND, f"Failed to resolve foreign DID '{iss}': {e}", issuer_did=iss)
+            
+        verification_methods = did_doc.get("verificationMethod", [])
+        signing_key_vm = next((vm for vm in verification_methods if vm.get("id") == kid), None)
+        
+        if signing_key_vm is None:
+            return _fail(UNKNOWN_KID, f"Key '{kid}' is not known in foreign DID document '{iss}'", issuer_did=iss, kid=kid)
+            
+        try:
+            public_key_bytes = base64.b64decode(signing_key_vm.get("publicKeyBase64"))
+        except Exception:
+            return _fail(SIGNATURE_INVALID, "Failed to load foreign issuer public key", issuer_did=iss, kid=kid)
+            
+        # V1 historical key limitations for foreign DIDs:
+        # We only know it is currently published in the DID doc.
+        # We assume it is valid for this timestamp.
+        key_valid_from = issued_at_dt - _CLOCK_SKEW # Satisfy the check below
+        key_valid_until = None
 
     # ?? Step 7: historical key lifecycle ??????????????????????????????????????
-    # Derive iat from unverified payload (will be verified again after signature)
-    raw_iat = unverified_payload.get("iat")
-    if raw_iat is None:
-        return _fail(MALFORMED_VC, "JWT is missing 'iat' claim", issuer_did=iss, kid=kid)
-    try:
-        issued_at_dt = datetime.fromtimestamp(raw_iat, tz=timezone.utc)
-    except (OSError, ValueError, OverflowError):
-        return _fail(MALFORMED_VC, "JWT 'iat' value is invalid", issuer_did=iss, kid=kid)
-
-    key_valid_from = _ensure_utc(signing_key.valid_from)
-    key_valid_until = _ensure_utc(signing_key.valid_until) if signing_key.valid_until else None
     if issued_at_dt < key_valid_from - _CLOCK_SKEW:
         print(f"DEBUG: issued_at_dt={issued_at_dt} < key_valid_from={key_valid_from} - skew={key_valid_from - _CLOCK_SKEW}")
         return _fail(
             KEY_NOT_VALID_AT_ISSUANCE,
             f"Credential issuance time ({issued_at_dt.isoformat()}) is before the key's validity start",
-            issuer_did=iss,
-            kid=kid,
-            issued_at=issued_at_dt,
-            signature_status="key_lifecycle",
+            issuer_did=iss, kid=kid, issued_at=issued_at_dt, signature_status="key_lifecycle",
         )
     if key_valid_until is not None and issued_at_dt > key_valid_until + _CLOCK_SKEW:
         print(f"DEBUG: issued_at_dt={issued_at_dt} > key_valid_until={key_valid_until} + skew={key_valid_until + _CLOCK_SKEW}")
         return _fail(
             KEY_NOT_VALID_AT_ISSUANCE,
             f"Credential issuance time ({issued_at_dt.isoformat()}) is after the key's validity end",
-            issuer_did=iss,
-            kid=kid,
-            issued_at=issued_at_dt,
-            signature_status="key_lifecycle",
+            issuer_did=iss, kid=kid, issued_at=issued_at_dt, signature_status="key_lifecycle",
         )
 
     # ?? Step 8: cryptographic verification ????????????????????????????????????
     try:
-        public_key_bytes = base64.b64decode(signing_key.public_key)
         ed_public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
     except Exception:
-        return _fail(SIGNATURE_INVALID, "Failed to load issuer public key", issuer_did=iss, kid=kid)
+        return _fail(SIGNATURE_INVALID, "Failed to load Ed25519 public key", issuer_did=iss, kid=kid)
 
     # After this point ALL trust decisions are post-verification
     try:

@@ -192,45 +192,89 @@ def verify_and_check_status(db: Session, vc_jwt: str, index: int) -> bool:
         if not issuer_did:
             raise StatusListError("Missing issuer in Status List JWT")
             
-        issuer_identity = db.scalar(
-            select(OrganizationIdentity)
-            .options(selectinload(OrganizationIdentity.keys))
-            .where(OrganizationIdentity.did == issuer_did)
-        )
-        if not issuer_identity:
-            raise StatusListError("Status List issuer not found in registry")
-            
-        signing_key_record = next((k for k in issuer_identity.keys if k.verification_method == kid), None)
-        if not signing_key_record:
-            raise StatusListError("Status List signing key not found")
-            
-        issued_at_ts = unverified_payload.get("iat")
-        if issued_at_ts is None:
-            raise StatusListError("Missing iat in Status List JWT")
+        from app.core.config import get_settings
+        settings = get_settings()
         
-        issued_at = datetime.fromtimestamp(issued_at_ts, tz=timezone.utc)
+        is_local_issuer = False
+        if settings.did_web_domain and issuer_did.startswith(f"did:web:{settings.did_web_domain}"):
+            is_local_issuer = True
+        elif not settings.did_web_domain:
+            is_local_issuer = True
+            
+        public_key_bytes = None
         
-        valid_from = signing_key_record.valid_from
-        if valid_from.tzinfo is None:
-            valid_from = valid_from.replace(tzinfo=timezone.utc)
+        if is_local_issuer:
+            issuer_identity = db.scalar(
+                select(OrganizationIdentity)
+                .options(selectinload(OrganizationIdentity.keys))
+                .where(OrganizationIdentity.did == issuer_did)
+            )
+            if not issuer_identity:
+                if settings.did_web_domain:
+                    raise StatusListError("Local Status List issuer not found in registry")
+                else:
+                    is_local_issuer = False
+                    
+        if is_local_issuer and issuer_identity:
+            signing_key_record = next((k for k in issuer_identity.keys if k.verification_method == kid), None)
+            if not signing_key_record:
+                raise StatusListError("Status List signing key not found")
+                
+            issued_at_ts = unverified_payload.get("iat")
+            if issued_at_ts is None:
+                raise StatusListError("Missing iat in Status List JWT")
             
-        valid_until = signing_key_record.valid_until
-        if valid_until and valid_until.tzinfo is None:
-            valid_until = valid_until.replace(tzinfo=timezone.utc)
+            issued_at = datetime.fromtimestamp(issued_at_ts, tz=timezone.utc)
+            
+            valid_from = signing_key_record.valid_from
+            if valid_from.tzinfo is None:
+                valid_from = valid_from.replace(tzinfo=timezone.utc)
+                
+            valid_until = signing_key_record.valid_until
+            if valid_until and valid_until.tzinfo is None:
+                valid_until = valid_until.replace(tzinfo=timezone.utc)
+            
+            if valid_from > issued_at:
+                raise StatusListError("Signing key was not valid at issuance time")
+            if valid_until and valid_until < issued_at:
+                raise StatusListError("Signing key was expired at issuance time")
+                
+            public_key_bytes = base64.b64decode(signing_key_record.public_key)
+            
+        else:
+            # Foreign Status List Issuer Resolution
+            from app.services.did_web_resolution_service import resolve_did_web, DIDResolutionError
+            try:
+                did_doc = resolve_did_web(issuer_did)
+            except DIDResolutionError as e:
+                raise StatusListError(f"Failed to resolve foreign status list DID '{issuer_did}': {e}")
+                
+            verification_methods = did_doc.get("verificationMethod", [])
+            signing_key_vm = next((vm for vm in verification_methods if vm.get("id") == kid), None)
+            
+            if signing_key_vm is None:
+                raise StatusListError(f"Key '{kid}' is not known in foreign DID document '{issuer_did}'")
+                
+            public_key_bytes = base64.b64decode(signing_key_vm.get("publicKeyBase64"))
+            
+            issued_at_ts = unverified_payload.get("iat")
+            if issued_at_ts is None:
+                raise StatusListError("Missing iat in Status List JWT")
+            issued_at = datetime.fromtimestamp(issued_at_ts, tz=timezone.utc)
+
         
-        if valid_from > issued_at:
-            raise StatusListError("Signing key was not valid at issuance time")
-        if valid_until and valid_until < issued_at:
-            raise StatusListError("Signing key was expired at issuance time")
-            
-            
         # Verify VC JWT
-        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(signing_key_record.public_key))
+        public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
         payload = jwt.decode(
             vc_jwt,
             public_key,
             algorithms=["EdDSA"],
-            issuer=issuer_did
+            issuer=issuer_did,
+            options={
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iat": True,
+            }
         )
         
         vc_claim = payload.get("vc", {})

@@ -13,7 +13,14 @@ router = APIRouter(tags=["DID Web Resolution"])
 
 
 def _get_hostname(request: Request) -> str:
-    """Extract domain from the Host header, falling back to URL hostname."""
+    """Extract domain from the Host header, falling back to URL hostname.
+    If did_web_domain is configured, enforce it to prevent Host header spoofing.
+    """
+    from app.core.config import get_settings
+    settings = get_settings()
+    if settings.did_web_domain:
+        return settings.did_web_domain
+
     host_header = request.headers.get("host", "")
     # Strip port if present
     hostname = host_header.split(":")[0] if host_header else ""
