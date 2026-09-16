@@ -47,10 +47,13 @@ def canonical_delegation_document(
     capabilities: Iterable[Mapping[str, Any]],
     allow_subdelegation: bool = False,
     max_delegation_depth: int = 0,
+    status_list_id: UUID | None = None,
+    status_list_index: int | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     normalized_capabilities = [_canonical_capability(capability) for capability in capabilities]
     normalized_capabilities.sort(key=_canonical_json_bytes)
-    return {
+    doc = {
         "capabilities": normalized_capabilities,
         "constraints": {
             "allowSubdelegation": allow_subdelegation,
@@ -70,6 +73,18 @@ def canonical_delegation_document(
         "rootDelegationId": str(root_delegation_id),
         "type": "DPIAuthorityDelegation",
     }
+    
+    if status_list_id is not None and status_list_index is not None and base_url is not None:
+        list_url = f"{base_url}/.well-known/status-lists/{status_list_id}"
+        doc["delegationStatus"] = {
+            "id": f"{list_url}#{status_list_index}",
+            "type": "BitstringStatusListEntry",
+            "statusPurpose": "revocation",
+            "statusListIndex": str(status_list_index),
+            "statusListCredential": list_url
+        }
+        
+    return doc
 
 
 def canonical_delegation_bytes(**kwargs: Any) -> bytes:

@@ -143,6 +143,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
     key_valid_from = _ensure_utc(signing_key.valid_from)
     key_valid_until = _ensure_utc(signing_key.valid_until) if signing_key.valid_until else None
     if issued_at_dt < key_valid_from - _CLOCK_SKEW:
+        print(f"DEBUG: issued_at_dt={issued_at_dt} < key_valid_from={key_valid_from} - skew={key_valid_from - _CLOCK_SKEW}")
         return _fail(
             KEY_NOT_VALID_AT_ISSUANCE,
             f"Credential issuance time ({issued_at_dt.isoformat()}) is before the key's validity start",
@@ -152,6 +153,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
             signature_status="key_lifecycle",
         )
     if key_valid_until is not None and issued_at_dt > key_valid_until + _CLOCK_SKEW:
+        print(f"DEBUG: issued_at_dt={issued_at_dt} > key_valid_until={key_valid_until} + skew={key_valid_until + _CLOCK_SKEW}")
         return _fail(
             KEY_NOT_VALID_AT_ISSUANCE,
             f"Credential issuance time ({issued_at_dt.isoformat()}) is after the key's validity end",
@@ -257,6 +259,43 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
     extra_types = [t for t in vc_type if t != "VerifiableCredential"]
     credential_type = extra_types[0] if extra_types else "VerifiableCredential"
 
+    # ?? Step 11: artifact-first status verification ???????????????????????????
+    is_revoked = False
+    credential_status = vc_claim.get("credentialStatus")
+    if credential_status:
+        # Resolve external status list
+        status_url = credential_status.get("statusListCredential")
+        status_index = credential_status.get("statusListIndex")
+        
+        if not status_url or status_index is None:
+            return _fail(
+                INVALID_VC_STRUCTURE,
+                "credentialStatus is missing statusListCredential or statusListIndex",
+                issuer_did=iss, kid=kid, issued_at=issued_at_dt, signature_status="valid"
+            )
+            
+        try:
+            status_index_int = int(status_index)
+        except ValueError:
+            return _fail(
+                INVALID_VC_STRUCTURE,
+                "statusListIndex must be an integer",
+                issuer_did=iss, kid=kid, issued_at=issued_at_dt, signature_status="valid"
+            )
+            
+        try:
+            from app.services.status_list_service import resolve_and_verify_status_list, StatusListError
+            is_revoked = resolve_and_verify_status_list(db, status_url, status_index_int)
+        except StatusListError as e:
+            return _fail(
+                "STATUS_VERIFICATION_FAILED",
+                f"Failed to verify credential status: {str(e)}",
+                issuer_did=iss, subject_did=subject_did, credential_type=credential_type,
+                jti=jti, issued_at=issued_at_dt, expires_at=expires_at_dt, kid=kid,
+                signature_status="valid", vc_context=vc_context, vc_type=vc_type,
+                credential_subject=credential_subject
+            )
+            
     # ?? Step 11: optional local DB lookup ?????????????????????????????????????
     local_credential = None
     local_status = None
@@ -264,6 +303,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
     if jti:
         try:
             jti_uuid = UUID(jti)
+            from app.models.verifiable_credential import VerifiableCredential
             local_credential = db.get(VerifiableCredential, jti_uuid)
         except (ValueError, AttributeError):
             local_credential = None
@@ -304,8 +344,8 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
                 signature_status="valid",
             )
 
-        # Fabric/revocation status supplements cryptographic validity but does not replace it
-        if local_status == "revoked":
+        # If it was revoked in the DB, and NO status list was checked (or status list said active which is a mismatch, but local DB revoked takes precedence as 'supplementary' evidence)
+        if local_status == "revoked" and not is_revoked:
             return VCVerificationResult(
                 valid=False,
                 reason_code=CREDENTIAL_REVOKED,
@@ -316,7 +356,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
                 issued_at=issued_at_dt,
                 expires_at=expires_at_dt,
                 kid=kid,
-                signature_status="valid",  # signature is valid; lifecycle is not
+                signature_status="valid",
                 vc_context=vc_context,
                 vc_type=vc_type,
                 credential_subject=credential_subject,
@@ -325,6 +365,27 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
                 fabric_transaction_id=fabric_transaction_id,
                 message="Credential has been revoked",
             )
+
+    if is_revoked:
+        return VCVerificationResult(
+            valid=False,
+            reason_code=CREDENTIAL_REVOKED,
+            issuer_did=iss,
+            subject_did=subject_did,
+            credential_type=credential_type,
+            jti=jti,
+            issued_at=issued_at_dt,
+            expires_at=expires_at_dt,
+            kid=kid,
+            signature_status="valid",
+            vc_context=vc_context,
+            vc_type=vc_type,
+            credential_subject=credential_subject,
+            local_credential_id=local_credential.id if local_credential else None,
+            local_status=local_status if local_credential else "revoked",
+            fabric_transaction_id=fabric_transaction_id,
+            message="Credential has been revoked",
+        )
 
     # ?? VALID ?????????????????????????????????????????????????????????????????
     return VCVerificationResult(
@@ -342,7 +403,7 @@ def verify_vc_jwt(vc_jwt: str, db: Session) -> VCVerificationResult:
         vc_type=vc_type,
         credential_subject=credential_subject,
         local_credential_id=local_credential.id if local_credential else None,
-        local_status=local_status,
+        local_status=local_status if local_credential else None,
         fabric_transaction_id=fabric_transaction_id,
         message="Credential is cryptographically valid and all claims are consistent",
     )

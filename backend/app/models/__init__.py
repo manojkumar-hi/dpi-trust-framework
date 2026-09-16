@@ -14,7 +14,7 @@ from app.models.audit_record import AuditRecord
 from app.models.idempotency import IdempotencyRecord
 from app.models.outbox import OutboxEvent
 from app.models.challenge import Challenge
-
+from app.models.bitstring_status_list import BitstringStatusList
 __all__ = [
     "Agent",
     "AgentIdentity",
@@ -32,4 +32,5 @@ __all__ = [
     "VerifiableCredential",
     "OutboxEvent",
     "Challenge",
+    "BitstringStatusList",
 ]

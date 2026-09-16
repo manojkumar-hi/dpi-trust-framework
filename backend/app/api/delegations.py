@@ -126,7 +126,9 @@ async def revoke_delegation_endpoint(
     principal: Principal = Depends(get_current_principal),
 ) -> DelegationResponse:
     try:
-        return await revoke_delegation(db, principal, delegation_id, request.reason)
+        response = await revoke_delegation(db, principal, delegation_id, request.reason)
+        db.commit()
+        return response
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except DelegationNotFoundError:

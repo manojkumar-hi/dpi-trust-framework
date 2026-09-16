@@ -48,8 +48,10 @@ app.add_middleware(CorrelationIdMiddleware)
 from app.api.did_web import router as did_web_router
 
 from app.api.auth import router as auth_router
+from app.api.status_lists import router as status_lists_router
 
 app.include_router(health_router)
+app.include_router(status_lists_router)
 app.include_router(auth_router)
 app.include_router(did_web_router)
 app.include_router(organizations_router)

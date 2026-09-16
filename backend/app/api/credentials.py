@@ -74,7 +74,7 @@ async def issue_credential(
                 response.model_dump(mode="json"), 
                 201
             )
-            db.commit()
+        db.commit()
         return response
     except IssuerOrganizationNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Issuer organization not found") from exc
@@ -162,7 +162,9 @@ def revoke_credential_record(
     if credential and principal.organization_id != credential.issuer_organization_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to revoke this credential")
     try:
-        return revoke_credential(db, credential_id, request.reason)
+        response = revoke_credential(db, credential_id, request.reason)
+        db.commit()
+        return response
     except CredentialNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Credential not found") from exc
     except CredentialAlreadyRevokedError as exc:

@@ -22,6 +22,7 @@ from app.services.organization_key_service import load_private_key
 from app.schemas.audit import AuditRecordCreate
 from app.services.audit_service import AuditService
 from app.models.outbox import OutboxEvent
+from app.services.status_list_service import allocate_index, set_status, build_and_sign_status_list_vc
 from uuid import uuid4
 
 class IssuerOrganizationNotFoundError(Exception):
@@ -75,7 +76,7 @@ def mark_expired(db: Session, credential: VerifiableCredential) -> None:
         and credential.expires_at <= now
     ):
         credential.status = "expired"
-        db.commit()
+        db.flush()
         db.refresh(credential)
 
 
@@ -130,23 +131,51 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
         credential.signature = base64.b64encode(private_key.sign(signed_bytes)).decode("ascii")
         credential.signed_at = datetime.now(timezone.utc)
         
+        list_id, list_idx = allocate_index(db, issuer_identity.did)
+        credential.status_list_id = list_id
+        credential.status_list_index = list_idx
+        
+        org = get_organization(db, credential_data.issuer_organization_id)
+        base_url = f"https://{org.domain}" if org else "https://example.com"
+        
+        if list_idx == 0:
+            build_and_sign_status_list_vc(db, list_id, base_url)
+            
+        list_url = f"{base_url}/.well-known/status-lists/{list_id}"
+        
         # W3C vc+jwt
         vc_payload = {
             "iss": issuer_identity.did,
             "sub": subject_identity.did,
             "jti": str(credential.id),
-            "iat": int(credential.issued_at.timestamp()),
-            "vc": {
-                "@context": ["https://www.w3.org/2018/credentials/v1"],
+        }
+        
+        aware_dt = credential.issued_at.replace(tzinfo=timezone.utc) if credential.issued_at.tzinfo is None else credential.issued_at
+        print(f"DEBUG_CRED: issued_at={credential.issued_at} (tzinfo={credential.issued_at.tzinfo}), aware_dt={aware_dt}, timestamp={aware_dt.timestamp()}")
+        
+        vc_payload["iat"] = int(aware_dt.timestamp())
+        
+        vc_payload["vc"] = {
+                "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "https://w3id.org/vc/bitstring-status-list/v1"
+                ],
                 "type": ["VerifiableCredential", credential.credential_type],
                 "credentialSubject": {
                     "id": subject_identity.did,
                     **credential.credential_data
+                },
+                "credentialStatus": {
+                    "id": f"{list_url}#{list_idx}",
+                    "type": "BitstringStatusListEntry",
+                    "statusPurpose": "revocation",
+                    "statusListIndex": str(list_idx),
+                    "statusListCredential": list_url
                 }
             }
-        }
+        
         if credential.expires_at:
-            vc_payload["exp"] = int(credential.expires_at.timestamp())
+            vc_payload["exp"] = int((credential.expires_at.replace(tzinfo=timezone.utc) if credential.expires_at.tzinfo is None else credential.expires_at).timestamp())
 
         credential.kid = kid
         credential.vc_jwt = jwt.encode(
@@ -198,7 +227,7 @@ async def create_credential(db: Session, credential_data: CredentialCreate) -> V
         )
         AuditService.create_audit_record(db, audit_record)
         
-        db.commit()
+        db.flush()
     except Exception:
         db.rollback()
         raise
@@ -257,6 +286,12 @@ def revoke_credential(
     credential.revoked_at = datetime.now(timezone.utc)
     credential.revocation_reason = reason
     
+    if credential.status_list_id is not None:
+        set_status(db, credential.status_list_id, credential.status_list_index, True)
+        org = get_organization(db, credential.issuer_organization_id)
+        base_url = f"https://{org.domain}" if org else "https://example.com"
+        build_and_sign_status_list_vc(db, credential.status_list_id, base_url)
+    
     audit_record = AuditRecordCreate(
         event_category="CREDENTIAL",
         event_type="credential_revoked",
@@ -282,7 +317,7 @@ def revoke_credential(
     )
     db.add(outbox_event)
     
-    db.commit()
+    db.flush()
     db.refresh(credential)
     return credential
 

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.delegation_capability import DelegationCapability
     from app.models.delegation_event import DelegationEvent
     from app.models.organization import Organization
+    from app.models.bitstring_status_list import BitstringStatusList
 
 
 class Delegation(Base):
@@ -60,6 +61,10 @@ class Delegation(Base):
     signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     canonical_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     fabric_transaction_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status_list_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("bitstring_status_lists.id"), nullable=True, index=True
+    )
+    status_list_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

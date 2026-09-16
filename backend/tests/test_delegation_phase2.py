@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from app.models.agent import Agent
@@ -36,6 +37,10 @@ class FakeSession:
         self.organization_identity = organization_identity
         self.agent_identity = agent_identity
         self.key = key
+        if self.key and hasattr(self.organization_identity, 'keys'):
+            self.organization_identity.keys = [self.key]
+        elif self.key:
+            self.organization_identity.keys = [self.key]
         self.delegation = None
         self.events = []
 
@@ -56,6 +61,19 @@ class FakeSession:
             return self.agent_identity
         if entity is OrganizationIdentityKey:
             return self.key
+        
+        from app.models.bitstring_status_list import BitstringStatusList
+        if entity is BitstringStatusList:
+            if not hasattr(self, 'status_list'):
+                self.status_list = BitstringStatusList(
+                    id=uuid4(),
+                    issuer_did=f"did:web:test:{uuid4()}",
+                    status_purpose="revocation",
+                    bitstring=bytearray(16384),
+                    current_index=0,
+                )
+            return self.status_list
+            
         return None
 
     def add(self, value):
@@ -82,11 +100,14 @@ def _identities(private_key=None):
     agent_id = uuid4()
     organization = Organization(id=organization_id, name="Org", domain="org.example", status="active")
     agent = Agent(id=agent_id, organization_id=organization_id, name="Agent", agent_type="worker", status="active")
+    
+    private_key_obj = private_key or Ed25519PrivateKey.generate()
+    
     organization_identity = OrganizationIdentity(
         id=uuid4(),
         organization_id=organization_id,
         did=f"did:dpi:org:{organization_id}",
-        public_key=_public_key(private_key or Ed25519PrivateKey.generate()),
+        public_key=_public_key(private_key_obj),
         status="active",
     )
     agent_identity = AgentIdentity(
@@ -96,6 +117,8 @@ def _identities(private_key=None):
         public_key="agent-public-key",
         status="active",
     )
+    from app.services.organization_key_service import save_private_key
+    save_private_key(organization_id, private_key_obj)
     return organization, agent, organization_identity, agent_identity
 
 
@@ -240,12 +263,14 @@ async def test_create_and_verify_valid_signed_delegation(monkeypatch):
     )
     db = FakeSession(organization, agent, organization_identity, agent_identity, key)
     monkeypatch.setattr(delegation_service, "load_private_key", lambda _: private_key)
+    import app.services.status_list_service
+    monkeypatch.setattr(app.services.status_list_service, "resolve_and_verify_status_list", lambda _db, _url, _idx: False)
     principal = Principal(organization_id=organization.id)
     delegation = await delegation_service.create_delegation(db, principal, _request(organization, agent))
     result = await delegation_service.verify_delegation(db, delegation.id)
     assert result.valid is True
     assert result.signature_valid is True
-    assert any(event.event_type == "created" for event in db.events)
+    assert any(getattr(event, "event_type", None) == "created" for event in db.events)
 
 
 @pytest.mark.asyncio
@@ -365,8 +390,9 @@ async def test_key_timeline_validation():
         public_key=_public_key(private_key),
         status="active",
         valid_from=delegation.signed_at - timedelta(days=1),
-        valid_until=None
     )
+    from app.services.organization_key_service import save_private_key
+    save_private_key(organization.id, private_key)
     db = FakeSession(organization, agent, organization_identity, agent_identity, key)
     db.delegation = delegation
     result = await delegation_service.verify_delegation(db, delegation.id)

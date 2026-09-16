@@ -30,6 +30,7 @@ from app.services.organization_key_service import load_private_key
 from app.schemas.audit import AuditRecordCreate
 from app.services.audit_service import AuditService
 from app.models.outbox import OutboxEvent
+from app.services.status_list_service import allocate_index, set_status, build_and_sign_status_list_vc
 
 
 class DelegationError(Exception):
@@ -187,6 +188,11 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
 
     delegation_id = uuid4()
     issued_at = _utc_now()
+    list_id, list_idx = allocate_index(db, organization_identity.did)
+    if list_idx == 0:
+        base_url = f"https://{organization.domain}" if organization else "https://example.com"
+        build_and_sign_status_list_vc(db, list_id, base_url)
+    
     delegation = Delegation(
         id=delegation_id,
         delegator_organization_id=organization.id,
@@ -206,6 +212,8 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
         signed_at=issued_at,
         signature="pending",
         canonical_hash="0" * 64,
+        status_list_id=list_id,
+        status_list_index=list_idx,
     )
     db.add(delegation)
     try:
@@ -222,6 +230,9 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
             expires_at=delegation.expires_at,
             issued_at=delegation.signed_at,
             capabilities=capability_payloads,
+            status_list_id=delegation.status_list_id,
+            status_list_index=delegation.status_list_index,
+            base_url=f"https://{organization.domain}" if organization else "https://example.com"
         )
         delegation.signature = base64.b64encode(private_key.sign(signed_bytes)).decode("ascii")
         delegation.canonical_hash = delegation_hash(
@@ -236,6 +247,9 @@ async def create_delegation(db: Session, principal: Principal, data: DelegationC
             expires_at=delegation.expires_at,
             issued_at=delegation.signed_at,
             capabilities=capability_payloads,
+            status_list_id=delegation.status_list_id,
+            status_list_index=delegation.status_list_index,
+            base_url=f"https://{organization.domain}" if organization else "https://example.com"
         )
         for capability in capability_payloads:
             delegation.capabilities.append(
@@ -308,7 +322,7 @@ def _delegation_payloads(delegation: Delegation) -> list[dict[str, Any]]:
     ]
 
 
-def _canonical_bytes_for_delegation(delegation: Delegation) -> bytes:
+def _canonical_bytes_for_delegation(delegation: Delegation, base_url: str | None = None) -> bytes:
     return canonical_delegation_bytes(
         delegation_id=delegation.id,
         delegator_did=delegation.delegator_did,
@@ -321,6 +335,9 @@ def _canonical_bytes_for_delegation(delegation: Delegation) -> bytes:
         expires_at=delegation.expires_at,
         issued_at=delegation.signed_at,
         capabilities=_delegation_payloads(delegation),
+        status_list_id=delegation.status_list_id,
+        status_list_index=delegation.status_list_index,
+        base_url=base_url
     )
 
 
@@ -335,7 +352,7 @@ def _refresh_expiry(db: Session, delegation: Delegation) -> None:
             to_status="expired",
             actor_did=None,
         )
-        db.commit()
+        db.flush()
         db.refresh(delegation)
 
 
@@ -368,7 +385,8 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
         and agent_identity.did == delegation.delegatee_did
     )
 
-    canonical_bytes = _canonical_bytes_for_delegation(delegation)
+    base_url = f"https://{organization.domain}" if organization else "https://example.com"
+    canonical_bytes = _canonical_bytes_for_delegation(delegation, base_url)
     calculated_hash = delegation_hash(
         delegation_id=delegation.id,
         delegator_did=delegation.delegator_did,
@@ -381,6 +399,9 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
         expires_at=delegation.expires_at,
         issued_at=delegation.signed_at,
         capabilities=_delegation_payloads(delegation),
+        status_list_id=delegation.status_list_id,
+        status_list_index=delegation.status_list_index,
+        base_url=base_url
     )
     hash_valid = calculated_hash == delegation.canonical_hash
     capabilities_valid = all(
@@ -415,8 +436,21 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
         if parent is None or parent.status != "active":
             parent_valid = False
 
+    # External artifact-first status verification
+    status_list_valid = True
+    if delegation.status_list_id is not None and delegation.status_list_index is not None:
+        try:
+            from app.services.status_list_service import resolve_and_verify_status_list, StatusListError
+            status_url = f"{base_url}/.well-known/status-lists/{delegation.status_list_id}"
+            is_revoked = resolve_and_verify_status_list(db, status_url, delegation.status_list_index)
+            if is_revoked:
+                status_list_valid = False
+        except Exception:
+            status_list_valid = False
+            
     lifecycle_valid = (
-        delegation.status == "active"
+        status_list_valid
+        and delegation.status == "active"
         and delegation.starts_at <= _utc_now() < delegation.expires_at
         and parent_valid
     )
@@ -488,6 +522,13 @@ async def revoke_delegation(db: Session, principal: Principal, delegation_id: UU
     delegation.status = "revoked"
     delegation.revoked_at = revoked_at
     delegation.revocation_reason = reason
+    
+    if delegation.status_list_id is not None:
+        set_status(db, delegation.status_list_id, delegation.status_list_index, True)
+        org = db.get(Organization, delegation.delegator_organization_id)
+        base_url = f"https://{org.domain}" if org else "https://example.com"
+        build_and_sign_status_list_vc(db, delegation.status_list_id, base_url)
+        
     _add_event(
         db,
         delegation,
@@ -512,7 +553,7 @@ async def revoke_delegation(db: Session, principal: Principal, delegation_id: UU
     )
     AuditService.create_audit_record(db, audit_record)
     
-    db.commit()
+    db.flush()
     db.refresh(delegation)
     return delegation
 

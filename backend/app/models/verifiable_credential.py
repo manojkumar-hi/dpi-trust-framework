@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, Integer, func
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,6 +11,7 @@ from app.database.base import Base
 if TYPE_CHECKING:
     from app.models.agent import Agent
     from app.models.organization import Organization
+    from app.models.bitstring_status_list import BitstringStatusList
 
 
 class VerifiableCredential(Base):
@@ -41,6 +42,10 @@ class VerifiableCredential(Base):
     signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     vc_jwt: Mapped[str | None] = mapped_column(Text, nullable=True)
     kid: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status_list_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("bitstring_status_lists.id"), nullable=True, index=True
+    )
+    status_list_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
