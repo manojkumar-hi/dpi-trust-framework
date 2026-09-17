@@ -45,6 +45,17 @@ app = FastAPI(
 
 app.add_middleware(CorrelationIdMiddleware)
 
+from fastapi.middleware.cors import CORSMiddleware
+
+if settings.cors_allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Idempotency-Key", "Content-Type"],
+    )
+
 from app.api.did_web import router as did_web_router
 
 from app.api.auth import router as auth_router
