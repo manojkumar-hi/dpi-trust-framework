@@ -13,20 +13,42 @@ export const Sidebar = () => {
   ];
 
   return (
-    <div className="d-flex flex-column flex-shrink-0 p-3 text-white bg-dark border-end border-secondary" style={{ width: '250px', minHeight: 'calc(100vh - 57px)' }}>
-      <ul className="nav nav-pills flex-column mb-auto">
-        {navItems.map((item) => (
-          <li className="nav-item mb-1" key={item.path}>
-            <NavLink 
-              to={item.path} 
-              className={({ isActive }) => `nav-link text-white ${isActive ? 'active bg-primary' : ''}`}
-            >
-              <i className={`bi bi-${item.icon} me-2`}></i>
-              {item.label}
-            </NavLink>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      <style>{`
+        .sidebar-link {
+          color: #adb5bd;
+          transition: all 0.2s ease;
+          border-radius: 0.375rem;
+          padding: 0.75rem 1rem;
+          font-weight: 500;
+        }
+        .sidebar-link:hover {
+          color: #fff;
+          background-color: rgba(255, 255, 255, 0.05);
+        }
+        .sidebar-link.active {
+          color: #fff;
+          background-color: rgba(13, 110, 253, 0.15); /* light primary bg */
+          border-left: 4px solid #0d6efd;
+          border-top-left-radius: 0;
+          border-bottom-left-radius: 0;
+        }
+      `}</style>
+      <div className="d-flex flex-column flex-shrink-0 p-3 text-white bg-dark border-end border-secondary" style={{ width: '250px', minHeight: 'calc(100vh - 57px)' }}>
+        <ul className="nav nav-pills flex-column mb-auto gap-1">
+          {navItems.map((item) => (
+            <li className="nav-item" key={item.path}>
+              <NavLink 
+                to={item.path} 
+                className={({ isActive }) => `nav-link sidebar-link d-flex align-items-center ${isActive ? 'active' : ''}`}
+              >
+                <i className={`bi bi-${item.icon} me-3 fs-5`}></i>
+                {item.label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>
   );
 };

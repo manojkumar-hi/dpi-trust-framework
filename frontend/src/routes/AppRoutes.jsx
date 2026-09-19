@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
+import { Splash } from '../pages/Splash';
 import { Dashboard } from '../pages/Dashboard';
 import { Agents } from '../pages/Agents';
 import { Credentials } from '../pages/Credentials';
@@ -20,7 +21,7 @@ const NotFound = () => (
 export const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Splash />} />
       <Route element={<AppLayout />}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/agents" element={<Agents />} />
