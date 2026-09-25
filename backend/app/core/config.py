@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     auth_static_public_key: str | None = None  # For dev/test
     auth_static_private_key: str | None = None # For issuing tokens
     auth_clock_skew_seconds: int = 60
+    auth_dev_login_enabled: bool = False
 
     # Module 15.4 Verifier Identity
     verifier_did: str = "did:web:trust.dpi.local"

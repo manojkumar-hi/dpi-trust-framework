@@ -310,6 +310,21 @@ def resolve_and_verify_status_list(db: Session, status_list_url: str, index: int
     Raises StatusListError on any failure.
     """
     vc_jwt = _STATUS_LIST_CACHE.get(status_list_url)
+    
+    if not vc_jwt:
+        # Local Demo Resolution: If this status list was issued by this instance, 
+        # it exists in our local DB. Avoid the SSRF-protected HTTP fetch for local lists.
+        try:
+            list_id_str = status_list_url.split("/")[-1]
+            from uuid import UUID
+            list_uuid = UUID(list_id_str)
+            from app.models.bitstring_status_list import BitstringStatusList
+            status_list = db.get(BitstringStatusList, list_uuid)
+            if status_list and status_list.status_list_vc_jwt:
+                vc_jwt = status_list.status_list_vc_jwt
+        except Exception:
+            pass
+
     if not vc_jwt:
         try:
             raw_bytes = fetch_status_list_artifact(status_list_url)
@@ -319,6 +334,6 @@ def resolve_and_verify_status_list(db: Session, status_list_url: str, index: int
         except UnicodeDecodeError:
             raise StatusListError("Status list artifact is not valid UTF-8 text")
             
-        _STATUS_LIST_CACHE[status_list_url] = vc_jwt
+    _STATUS_LIST_CACHE[status_list_url] = vc_jwt
         
     return verify_and_check_status(db, vc_jwt, index)

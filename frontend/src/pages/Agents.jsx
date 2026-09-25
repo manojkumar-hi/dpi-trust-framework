@@ -9,6 +9,9 @@ const AgentDetailsModal = ({ agent, onClose }) => {
   const [trustData, setTrustData] = useState(null);
   const [trustLoading, setTrustLoading] = useState(false);
   const [trustError, setTrustError] = useState(null);
+  const [authDecision, setAuthDecision] = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState(null);
   const modalRef = useRef(null);
 
   useEffect(() => {
@@ -48,6 +51,30 @@ const AgentDetailsModal = ({ agent, onClose }) => {
       }
     } finally {
       setTrustLoading(false);
+    }
+  };
+
+  const handleRequestAuthorization = async () => {
+    try {
+      setAuthLoading(true);
+      setAuthError(null);
+      setAuthDecision(null);
+      const data = await agentsApi.requestAuthorization(agent.id);
+      setAuthDecision(data);
+    } catch (err) {
+      if (!err.response) {
+        setAuthError('Backend Offline: Cannot perform authorization check.');
+      } else if (err.response.status === 401 || err.response.status === 403) {
+        setAuthError('Authentication required. Configure a JWT token in the top bar.');
+      } else if (err.response.status === 404) {
+        setAuthError('Agent not found.');
+      } else {
+        // For authorization decisions, a 403 from the engine returns the decision
+        const detail = err.response.data?.detail;
+        setAuthError(`Authorization check error: ${detail || err.response.status}`);
+      }
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -139,7 +166,7 @@ const AgentDetailsModal = ({ agent, onClose }) => {
                 <div className="row text-center">
                   <div className="col-4 mb-2">
                     <div className="text-muted small text-uppercase">Trust Score</div>
-                    <div className="fs-3 fw-bold text-light">{(trustData.trust_score * 100).toFixed(1)}%</div>
+                    <div className="fs-3 fw-bold text-light">{((trustData.trust ?? 0) * 100).toFixed(1)}%</div>
                   </div>
                   <div className="col-8 mb-2 d-flex justify-content-around align-items-center">
                     <div>
@@ -166,6 +193,68 @@ const AgentDetailsModal = ({ agent, onClose }) => {
               {!trustData && !trustLoading && !trustError && (
                 <p className="text-muted small mb-0 text-center py-2">
                   Click 'Evaluate Trust' to retrieve dynamic trust metrics for this agent.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Authorization Decision Section */}
+          <div className="card bg-darker border-secondary mt-3 mb-0">
+            <div className="card-header border-secondary bg-transparent d-flex justify-content-between align-items-center">
+              <h6 className="mb-0 text-light"><i className="bi bi-diagram-3 me-2"></i>Authorization Decision</h6>
+              <button
+                id="request-auth-btn"
+                className="btn btn-sm btn-outline-warning"
+                onClick={handleRequestAuthorization}
+                disabled={authLoading}
+              >
+                {authLoading
+                  ? <><span className="spinner-border spinner-border-sm me-1" role="status"></span>Checking...</>
+                  : <><i className="bi bi-lightning me-1"></i>Request Authorization</>}
+              </button>
+            </div>
+            <div className="card-body">
+              {authError && (
+                <div className="alert alert-danger py-2 px-3 mb-0 small">
+                  <i className="bi bi-exclamation-triangle me-2"></i>{authError}
+                </div>
+              )}
+              {authDecision && (
+                <div>
+                  <div className={`alert ${authDecision.decision?.reason_code === 'ALLOW' || authDecision.message?.includes('success') ? 'alert-success' : 'alert-danger'} d-flex align-items-center py-2 mb-2`}>
+                    <i className={`bi ${authDecision.decision?.reason_code === 'ALLOW' ? 'bi-shield-check-fill' : 'bi-shield-x-fill'} fs-4 me-3`}></i>
+                    <div>
+                      <strong className="d-block">
+                        {authDecision.decision?.reason_code === 'ALLOW' ? 'ALLOW' : 'DENY'}
+                      </strong>
+                      <span className="small">{authDecision.message}</span>
+                    </div>
+                  </div>
+                  <table className="table table-dark table-sm table-borderless mb-0">
+                    <tbody>
+                      <tr>
+                        <td className="text-muted small w-25">Reason Code</td>
+                        <td><span className="badge bg-secondary font-monospace">{authDecision.decision?.reason_code}</span></td>
+                      </tr>
+                      <tr>
+                        <td className="text-muted small">Explanation</td>
+                        <td className="text-light small">{authDecision.decision?.explanation}</td>
+                      </tr>
+                      <tr>
+                        <td className="text-muted small">Agent ID</td>
+                        <td className="font-monospace small text-muted">{agent.id}</td>
+                      </tr>
+                      <tr>
+                        <td className="text-muted small">Resource</td>
+                        <td><span className="badge bg-dark border border-secondary text-light">verifiable_credential:issue</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!authDecision && !authLoading && !authError && (
+                <p className="text-muted small mb-0 text-center py-2">
+                  Click 'Request Authorization' to evaluate trust-based access decision for this agent.
                 </p>
               )}
             </div>

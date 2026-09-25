@@ -52,3 +52,42 @@ def login_with_vp(request: VPLoginRequest, db: Session = Depends(get_db)):
 
     except VPAuthError as e:
         raise HTTPException(status_code=401, detail=e.reason_code)
+
+
+class DevLoginRequest(BaseModel):
+    organization_id: UUID
+    agent_id: UUID
+
+@router.post("/login/dev", response_model=TokenResponse)
+def login_dev(request: DevLoginRequest, db: Session = Depends(get_db)):
+    """
+    LOCAL DEMO BOOTSTRAP: Do not use in production. 
+    This allows UI bootstrapping without a wallet for Review-2 demo.
+    """
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not settings.auth_dev_login_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    from app.services.organization_service import get_organization
+    org = get_organization(db, request.organization_id)
+    if not org:
+        raise HTTPException(status_code=400, detail="Invalid organization")
+
+    from app.services.agent_service import get_agent
+    agent = get_agent(db, request.agent_id)
+    if not agent:
+        raise HTTPException(status_code=400, detail="Invalid agent")
+
+    if agent.organization_id != org.id:
+        raise HTTPException(status_code=400, detail="Agent does not belong to organization")
+
+    if not agent.identity:
+        raise HTTPException(status_code=400, detail="Agent has no established identity")
+
+    token = issuer.issue_token(
+        subject=agent.identity.authentication_subject or agent.identity.did,
+        org_id=str(org.id),
+        agent_id=str(agent.id)
+    )
+    return TokenResponse(access_token=token)

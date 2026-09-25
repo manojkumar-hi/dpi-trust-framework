@@ -43,10 +43,16 @@ def create_identity(db: Session, agent_id: UUID) -> AgentIdentity:
     public_key_b64 = base64.b64encode(public_key).decode("ascii")
     now = datetime.now(timezone.utc)
 
+    from app.core.config import get_settings
+    settings = get_settings()
+    
+    agent_did = generate_did(agent_id, agent.organization.domain)
     identity = AgentIdentity(
         agent_id=agent_id,
-        did=generate_did(agent_id, agent.organization.domain),
+        did=agent_did,
         public_key=public_key_b64, # Legacy column, populated for migration backwards compatibility
+        authentication_issuer=settings.auth_jwt_issuer,
+        authentication_subject=agent_did
     )
     identity.keys.append(
         AgentIdentityKey(

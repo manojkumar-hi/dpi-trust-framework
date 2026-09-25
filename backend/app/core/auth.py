@@ -81,7 +81,8 @@ class JWTValidator:
         """Retrieves the public key for a given kid, refreshing JWKS if necessary."""
         # 1. Dev/Test static key support
         if self.settings.auth_static_public_key:
-            return serialization.load_pem_public_key(self.settings.auth_static_public_key.encode())
+            pub_key_pem = self.settings.auth_static_public_key.replace('\\n', '\n')
+            return serialization.load_pem_public_key(pub_key_pem.encode())
 
         # 2. Production JWKS support
         if not self.settings.auth_jwks_url:
@@ -157,8 +158,9 @@ class JWTIssuer:
         if not self.settings.auth_static_private_key:
             raise RuntimeError("auth_static_private_key is not configured")
 
+        priv_key_pem = self.settings.auth_static_private_key.replace('\\n', '\n')
         private_key = serialization.load_pem_private_key(
-            self.settings.auth_static_private_key.encode(),
+            priv_key_pem.encode(),
             password=None
         )
 

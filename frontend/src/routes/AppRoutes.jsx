@@ -9,6 +9,8 @@ import { Delegations } from '../pages/Delegations';
 import { Trust } from '../pages/Trust';
 import { Verification } from '../pages/Verification';
 import { Audit } from '../pages/Audit';
+import { SignIn } from '../pages/SignIn';
+import { useAuth } from '../context/AuthContext';
 
 const NotFound = () => (
   <div className="container-fluid d-flex flex-column justify-content-center align-items-center h-100">
@@ -18,11 +20,20 @@ const NotFound = () => (
   </div>
 );
 
+const ProtectedRoute = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+};
+
 export const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Splash />} />
-      <Route element={<AppLayout />}>
+      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/login" element={<SignIn />} />
+      <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/credentials" element={<Credentials />} />

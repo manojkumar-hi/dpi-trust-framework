@@ -1,0 +1,571 @@
+@startuml DPI_Trust_Framework_UML
+
+!pragma layout smetana
+skinparam defaultFontName Arial
+skinparam roundcorner 10
+skinparam maxMessageSize 150
+skinparam componentStyle uml2
+
+''' ============================================================
+''' PAGE 1: SYSTEM USE CASE DIAGRAM
+''' ============================================================
+title DPI Trust Framework - System Use Case Diagram
+
+actor "Organization" as Org
+actor "AI Agent" as Agent
+actor "Verifier Organization" as Verifier
+actor "External DID/Status Infrastructure" as ExtInfra
+
+package "DPI Trust Framework" {
+    
+    package "Identity & Onboarding" {
+        usecase "Organization Registration" as UC_OrgReg
+        usecase "Organization Identity Creation" as UC_OrgId
+        usecase "Agent Registration" as UC_AgentReg
+        usecase "Agent Identity Creation" as UC_AgentId
+    }
+
+    package "Credentials & Delegation" {
+        usecase "Credential Issuance" as UC_CredIssue
+        usecase "Credential Verification" as UC_CredVerify
+        usecase "Credential Revocation" as UC_CredRevoke
+        usecase "Delegation Creation" as UC_DelCreate
+        usecase "Delegation Verification" as UC_DelVerify
+        usecase "Delegation Revocation" as UC_DelRevoke
+    }
+    
+    package "Authentication & Authorization" {
+        usecase "Challenge Creation" as UC_Challenge
+        usecase "VP Authentication" as UC_VPAuth
+        usecase "Policy Authorization" as UC_PolicyAuth
+        usecase "Trust Evaluation" as UC_TrustEval
+        usecase "Sensitive Operation" as UC_Op
+    }
+    
+    package "Trust & Auditing" {
+        usecase "Behavioral Evidence Submission" as UC_EvidSubmit
+        usecase "Audit Recording" as UC_AuditRec
+        usecase "Audit Query" as UC_AuditQuery
+        usecase "Fabric Anchoring" as UC_Fabric
+    }
+    
+    package "Resolution" {
+        usecase "DID Resolution" as UC_DIDRes
+        usecase "Status Verification" as UC_StatusVerify
+    }
+}
+
+Org --> UC_OrgReg
+Org --> UC_OrgId
+Org --> UC_AgentReg
+Org --> UC_AgentId
+Org --> UC_CredIssue
+Org --> UC_DelCreate
+Org --> UC_CredRevoke
+Org --> UC_DelRevoke
+
+Agent --> UC_Challenge
+Agent --> UC_VPAuth
+Agent --> UC_Op
+
+Verifier --> UC_CredVerify
+Verifier --> UC_DelVerify
+Verifier --> UC_EvidSubmit
+Verifier --> UC_AuditQuery
+Verifier --> UC_StatusVerify
+
+ExtInfra <-- UC_DIDRes
+ExtInfra <-- UC_StatusVerify
+
+UC_VPAuth .> UC_Challenge : <<include>>
+UC_Op .> UC_PolicyAuth : <<include>>
+UC_PolicyAuth .> UC_TrustEval : <<include>>
+UC_PolicyAuth .> UC_AuditRec : <<include>>
+UC_PolicyAuth .> UC_DelVerify : <<extend>>
+UC_CredVerify .> UC_DIDRes : <<include>>
+UC_CredVerify .> UC_StatusVerify : <<include>>
+
+note right of UC_Fabric
+    Handled asynchronously 
+    via Transactional Outbox
+end note
+
+newpage
+''' ============================================================
+''' PAGE 2: ACTIVITY DIAGRAM — END-TO-END TRUST DECISION
+''' ============================================================
+title End-to-End Trust Decision - Activity Diagram
+
+start
+:Agent requests / attempts operation;
+:Authenticate principal;
+:Validate JWT / VP-derived authentication;
+:Resolve agent identity;
+
+if (Cross-Organization?) then (Yes)
+  :Resolve DID if cross-organization;
+else (No)
+endif
+
+:Verify credential;
+:Verify credential cryptographic signature;
+:Check credential status / revocation;
+:Verify delegation;
+:Check delegation capability;
+:Evaluate trust;
+:Evaluate policy;
+
+if (Authorized?) then (Yes)
+  :Perform operation;
+  :Record successful audit;
+  split
+    :Return Success to Agent;
+  split again
+    :Fabric/outbox processing where applicable;
+  end split
+else (No)
+  :Deny operation;
+  :Record failed audit;
+  :Return 403 Forbidden;
+endif
+stop
+
+newpage
+''' ============================================================
+''' PAGE 3: SEQUENCE DIAGRAM — CROSS-ORGANIZATION TRUST FLOW
+''' ============================================================
+title Cross-Organization Trust Flow - Sequence Diagram
+
+actor "AI Agent\n(Org A)" as Agent
+participant "Agent Wallet\n(VP Holder)" as Wallet
+box "Organization A"
+    participant "DPI Trust Framework A" as DPI_A
+end box
+box "Organization B / Verifier"
+    participant "DPI Trust Framework B" as DPI_B
+    database "PostgreSQL" as DB_B
+    participant "Outbox Worker" as Outbox
+end box
+participant "DID Web Infrastructure" as ExtDID
+participant "Status List Infrastructure" as ExtStatus
+participant "Fabric Network" as Fabric
+
+== Setup & Issuance ==
+note over Agent, DPI_A: Organization A registers agent and creates DID
+Agent -> DPI_A: Request VC & Delegation
+DPI_A -> DPI_A: Issue W3C Verifiable Credential (vc+jwt)
+DPI_A -> DPI_A: Issue Delegation
+DPI_A --> Agent: Return VC and Delegation IDs
+
+== Authentication ==
+Agent -> DPI_B: Request Authentication Challenge
+DPI_B --> Agent: Return nonce and challenge ID
+Agent -> Wallet: Sign VP containing nonce & audience (vp+jwt)
+Wallet --> Agent: Signed VP
+Agent -> DPI_B: Authenticate with VP
+DPI_B -> DPI_B: Verify VP signature and constraints
+DPI_B --> Agent: Return Session JWT
+
+== Operation Attempt ==
+Agent -> DPI_B: Attempt Sensitive Operation (Bearer JWT)
+DPI_B -> DPI_B: Extract Principal from JWT
+
+== Cryptographic & Status Verification ==
+DPI_B -> ExtDID: Resolve Agent DID (GET /.well-known/did.json or /agents/{id}/did.json)
+ExtDID --> DPI_B: DID Document
+DPI_B -> DPI_B: Verify agent's signing key from DID Document
+DPI_B -> DPI_B: Verify embedded VC signature
+DPI_B -> ExtStatus: Fetch Bitstring Status List VC (GET /.well-known/status-lists/{id})
+ExtStatus --> DPI_B: Status List VC JWT
+DPI_B -> DPI_B: Cryptographically verify Status List VC
+DPI_B -> DPI_B: Check credential status / revocation (ACTIVE/REVOKED)
+
+== Delegation Verification ==
+DPI_B -> DPI_B: Verify Delegation validity and capabilities
+
+== Trust & Authorization ==
+DPI_B -> DB_B: Query Agent Trust State (t, u, rr)
+DB_B --> DPI_B: Trust snapshot
+DPI_B -> DPI_B: Evaluate Authorization Policy
+alt Policy Allowed
+    DPI_B -> DPI_B: Perform operation
+    DPI_B -> DB_B: Record Audit (ALLOW) & Outbox Event
+    DPI_B --> Agent: Return Success
+else Policy Denied
+    DPI_B -> DB_B: Record Audit (DENY) & Outbox Event
+    DPI_B --> Agent: Return 403 Forbidden
+end
+
+== Asynchronous Anchoring ==
+Outbox -> DB_B: Poll for pending Outbox Events
+DB_B --> Outbox: Outbox Events
+Outbox -> Fabric: Anchor Audit/Evidence payload to chaincode
+Fabric --> Outbox: Transaction ID
+Outbox -> DB_B: Mark Outbox Event as PROCESSED
+
+newpage
+''' ============================================================
+''' PAGE 4: CLASS DIAGRAM — DOMAIN MODEL
+''' ============================================================
+title Domain Model - Class Diagram
+
+package "Identity Management" {
+    class Organization {
+        + id: UUID
+        + domain: String
+        + name: String
+        + status: String
+    }
+    
+    class OrganizationIdentity {
+        + id: UUID
+        + did: String
+        + status: String
+    }
+    
+    class OrganizationIdentityKey {
+        + id: UUID
+        + public_key_jwk: JSON
+        + private_key_jwk: JSON
+        + status: String
+    }
+
+    class Agent {
+        + id: UUID
+        + name: String
+        + status: String
+    }
+
+    class AgentIdentity {
+        + id: UUID
+        + did: String
+        + status: String
+    }
+
+    class AgentIdentityKey {
+        + id: UUID
+        + key_type: String
+        + public_key_jwk: JSON
+        + private_key_jwk: JSON
+        + status: String
+    }
+}
+
+package "Credentials & Revocation" {
+    class VerifiableCredential {
+        + id: UUID
+        + vc_jwt: String
+        + status: String
+        + status_list_index: Integer
+    }
+    
+    class BitstringStatusList {
+        + id: UUID
+        + status_list_vc_jwt: String
+        + bitstring_length: Integer
+    }
+}
+
+package "Delegation" {
+    class Delegation {
+        + id: UUID
+        + status: String
+        + expires_at: DateTime
+    }
+    
+    class DelegationCapability {
+        + id: UUID
+        + capability_code: String
+    }
+    
+    class DelegationEvent {
+        + id: UUID
+        + event_type: String
+        + reason: String
+    }
+}
+
+package "Trust & Auditing" {
+    class BehavioralEvidence {
+        + id: UUID
+        + action_metadata: JSON
+        + severity: Float
+        + outcome: String
+        + timestamp: DateTime
+    }
+    
+    class AgentTrustState {
+        + id: UUID
+        + trust: Float
+        + uncertainty: Float
+        + recent_risk: Float
+        + evidence_count: Integer
+    }
+    
+    class AuditRecord {
+        + id: UUID
+        + correlation_id: String
+        + event_category: String
+        + authorization_decision: String
+        + policy_id: String
+        + trust_snapshot: JSON
+    }
+}
+
+package "Infrastructure" {
+    class OutboxEvent {
+        + id: UUID
+        + topic: String
+        + payload: JSON
+        + status: String
+        + processed_at: DateTime
+    }
+    
+    class IdempotencyRecord {
+        + id: UUID
+        + idempotency_key: String
+        + request_hash: String
+        + response_body: JSON
+    }
+    
+    class Challenge {
+        + id: UUID
+        + nonce: String
+        + expires_at: DateTime
+    }
+}
+
+Organization "1" -- "0..1" OrganizationIdentity
+OrganizationIdentity "1" -- "0..*" OrganizationIdentityKey
+Organization "1" -- "0..*" Agent
+Agent "1" -- "0..1" AgentIdentity
+AgentIdentity "1" -- "0..*" AgentIdentityKey
+
+Agent "1" -- "0..*" VerifiableCredential
+Organization "1" -- "0..*" BitstringStatusList
+BitstringStatusList "1" -- "0..*" VerifiableCredential : Tracks revocation status
+
+Agent "1" -- "0..*" Delegation : Principal
+Agent "1" -- "0..*" Delegation : Delegate
+Delegation "1" -- "1..*" DelegationCapability
+Delegation "1" -- "0..*" DelegationEvent
+
+Agent "1" -- "1" AgentTrustState
+Agent "1" -- "0..*" BehavioralEvidence
+Agent "1" -- "0..*" AuditRecord
+
+
+newpage
+''' ============================================================
+''' PAGE 5: COMPONENT DIAGRAM — SYSTEM ARCHITECTURE
+''' ============================================================
+title System Architecture - Component Diagram
+
+component "React Frontend\n(Integration Target)" as Frontend
+
+node "FastAPI Application Server" {
+    component "Authentication / JWT" as Auth
+    component "DID / Identity Layer" as Identity
+    component "Credential Service" as CredentialService
+    component "Delegation Service" as DelegationService
+    component "Trust Evaluation" as TrustService
+    component "Authorization Engine" as AuthzEngine
+    component "Audit Service" as AuditService
+    component "Status List Service" as StatusListService
+    
+    component "Outbox Worker" as Outbox
+    component "Fabric Adapter" as FabricAdapter
+}
+
+database "PostgreSQL" as Postgres
+node "Hyperledger Fabric Network" as Fabric
+node "External Organization / Verifier" as ExtOrg {
+    component "External did:web infrastructure" as ExtDID
+    component "External Bitstring Status List resolution" as ExtStatus
+}
+
+Frontend -> Auth : VP/JWT
+Frontend -> Identity
+Frontend -> CredentialService
+Frontend -> DelegationService
+Frontend -> TrustService
+
+Auth --> Identity
+CredentialService --> StatusListService
+DelegationService --> Identity
+AuthzEngine --> TrustService
+AuthzEngine --> DelegationService
+AuthzEngine --> AuditService
+
+Auth --> Postgres
+Identity --> Postgres
+CredentialService --> Postgres
+DelegationService --> Postgres
+TrustService --> Postgres
+AuditService --> Postgres
+StatusListService --> Postgres
+Outbox --> Postgres
+
+Outbox -> FabricAdapter : Anchors payload
+FabricAdapter -> Fabric : Submits transaction
+
+CredentialService -> ExtDID : Resolves foreign DID
+CredentialService -> ExtStatus : Resolves foreign Status List
+
+newpage
+''' ============================================================
+''' PAGE 6: DEPLOYMENT DIAGRAM
+''' ============================================================
+title Deployment Model - Deployment Diagram
+
+node "Client Device" {
+    node "Browser" {
+        component "React Frontend" as React
+    }
+}
+
+node "Organization Application Server" {
+    node "FastAPI Runtime" {
+        component "FastAPI Backend Process" as Backend
+        component "Background Outbox Worker" as Worker
+    }
+}
+
+node "Database Server" {
+    database "PostgreSQL (Operational DB)" as DB
+}
+
+node "Hyperledger Fabric Network" {
+    component "Ordering Service" as Orderer
+    node "Organization Peer" {
+        component "Chaincode (Smart Contracts)" as CC
+    }
+}
+
+node "Foreign Organization Infrastructure" {
+    component "DID Web Server" as ForeignDID
+    component "Status List API Server" as ForeignStatus
+}
+
+React -down-> Backend : HTTPS (REST / JSON)
+Backend -down-> DB : TCP/IP (SQLAlchemy)
+Worker -up-> DB : TCP/IP (Polling)
+Worker -down-> Orderer : HTTPS (Fabric SDK/REST adapter)
+Orderer -down-> CC : Consensus/Block delivery
+Backend -right-> ForeignDID : HTTPS (GET /.well-known/did.json)
+Backend -right-> ForeignStatus : HTTPS (GET status-list VC)
+
+newpage
+''' ============================================================
+''' PAGE 7: STATE DIAGRAM — CREDENTIAL LIFECYCLE
+''' ============================================================
+title Credential Lifecycle - State Diagram
+
+[*] -> CREATED : Issue Verifiable Credential
+
+state CREATED {
+  note "VC generated, JWT signed, stored in PostgreSQL.\nBitstring status index assigned." as N1
+}
+
+CREATED -> ACTIVE : Publish
+state ACTIVE {
+  note "Status List VC bit is 0.\nCryptographic verification succeeds." as N2
+}
+
+ACTIVE -> REVOKED : Revoke (Compromise / Policy)
+state REVOKED {
+  note "Status List VC bit set to 1.\nCryptographic verification fails." as N3
+}
+
+ACTIVE -> EXPIRED : Time passes (exp claim)
+state EXPIRED {
+  note "Expiration claim threshold reached." as N4
+}
+
+REVOKED -> [*]
+EXPIRED -> [*]
+
+newpage
+''' ============================================================
+''' PAGE 8: STATE DIAGRAM — DELEGATION LIFECYCLE
+''' ============================================================
+title Delegation Lifecycle - State Diagram
+
+[*] -> ACTIVE : Issue Delegation\n(Assign Capabilities)
+
+state ACTIVE {
+  note "Delegation is valid and usable for Authorization Engine." as N1
+}
+
+ACTIVE -> REVOKED : Revoke (Manual/Policy)
+state REVOKED {
+  note "Delegation explicitly revoked.\nDelegationEvent logged." as N2
+}
+
+ACTIVE -> EXPIRED : Time passes (expires_at)
+state EXPIRED {
+  note "Delegation threshold reached." as N3
+}
+
+REVOKED -> [*]
+EXPIRED -> [*]
+
+newpage
+''' ============================================================
+''' PAGE 9: SECURITY / TRUST DECISION SEQUENCE
+''' ============================================================
+title Security / Trust Decision Sequence (Internal Authorization)
+
+actor "Agent" as Agent
+participant "FastAPI Auth/Context" as API
+participant "Identity/DID Resolver" as DIDRes
+participant "VC Verifier" as VCVer
+participant "Status Verifier" as StatusVer
+participant "Delegation Verifier" as DelVer
+participant "Trust Service" as TrustSvc
+participant "Authorization Engine" as Authz
+participant "Audit Service" as AuditSvc
+
+Agent -> API: Attempt Sensitive Operation (Bearer JWT)
+API -> API: Extract Principal (sub)
+
+API -> DIDRes: Resolve Agent DID Document
+alt Invalid DID/Key
+    DIDRes --> API: Resolution Failed / Key Missing
+    API --> Agent: 401 Unauthorized
+end
+
+API -> VCVer: Verify VC & Cryptographic Signature
+alt Invalid VC
+    VCVer --> API: Signature Invalid
+    API --> Agent: 403 Forbidden
+end
+
+API -> StatusVer: Verify Credential Status
+StatusVer -> StatusVer: Fetch Bitstring Status List VC
+alt Revoked Credential
+    StatusVer --> API: Status: REVOKED
+    API --> Agent: 403 Forbidden
+end
+
+API -> DelVer: Verify Delegation
+alt Invalid Delegation
+    DelVer --> API: Delegation Revoked/Expired
+    API --> Agent: 403 Forbidden
+end
+
+API -> TrustSvc: Get Trust State (Agent ID)
+TrustSvc --> API: t, u, rr
+
+API -> Authz: Evaluate Context (Trust, Capabilities, Action)
+alt Missing Capability or Insufficient Trust
+    Authz --> API: DENY (Reason Code)
+    API -> AuditSvc: Record Audit (DENY)
+    API --> Agent: 403 Forbidden
+else Trust > Required & Capability Present
+    Authz --> API: ALLOW
+    API -> AuditSvc: Record Audit (ALLOW)
+    API --> Agent: Operation Success
+end
+
+@enduml

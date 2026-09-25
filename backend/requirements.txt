@@ -8,3 +8,4 @@ cryptography
 httpx
 pytest
 PyJWT[crypto]
+cachetools

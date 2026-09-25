@@ -1,8 +1,223 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { trustApi } from '../api/trust';
 import { agentsApi } from '../api/agents';
 import { LoadingState } from '../components/common/LoadingState';
 
+// ─── Evidence Submission Form ────────────────────────────────────────────────
+const EvidenceForm = ({ agentId, onSuccess }) => {
+  const [form, setForm] = useState({
+    outcome: 'success',
+    severity: '',
+    evidence_quality: 0.8,
+    informative_value: 0.5,
+    action_metadata: ''
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const isSuccess = form.outcome === 'success';
+
+  const handleChange = (field, value) => {
+    setResult(null);
+    setError(null);
+    setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setResult(null);
+    setError(null);
+
+    try {
+      let metadata = null;
+      if (form.action_metadata.trim()) {
+        try {
+          metadata = JSON.parse(form.action_metadata.trim());
+        } catch {
+          setError('action_metadata must be valid JSON or left empty.');
+          setSubmitting(false);
+          return;
+        }
+      }
+
+      const payload = {
+        outcome: form.outcome,
+        evidence_quality: parseFloat(form.evidence_quality),
+        ...(isSuccess ? {
+          informative_value: parseFloat(form.informative_value),
+          severity: null
+        } : {
+          severity: parseInt(form.severity, 10),
+          informative_value: null
+        }),
+        action_metadata: metadata
+      };
+
+      const idempotencyKey = `evidence-${agentId}-${Date.now()}`;
+      const data = await trustApi.submitEvidence(agentId, payload, idempotencyKey);
+      setResult(data);
+      onSuccess && onSuccess();
+    } catch (err) {
+      if (!err.response) {
+        setError('Backend offline — cannot submit evidence.');
+      } else if (err.response.status === 401 || err.response.status === 403) {
+        setError('Authentication required. Configure a valid JWT token in the top bar.');
+      } else if (err.response.status === 422) {
+        const detail = err.response.data?.detail;
+        setError(`Validation error: ${JSON.stringify(detail)}`);
+      } else {
+        setError(`Error ${err.response.status}: ${err.response.data?.detail || 'Failed to submit evidence'}`);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="card bg-dark border-secondary shadow mt-4">
+      <div className="card-header border-secondary bg-transparent py-3">
+        <h5 className="mb-0 text-light">
+          <i className="bi bi-plus-circle text-info me-2"></i>Submit Behavioral Evidence
+        </h5>
+      </div>
+      <div className="card-body">
+        <form onSubmit={handleSubmit}>
+          <div className="row g-3">
+            {/* Outcome */}
+            <div className="col-md-6">
+              <label className="form-label text-muted small fw-semibold">Outcome *</label>
+              <select
+                id="evidence-outcome"
+                className="form-select bg-black text-light border-secondary"
+                value={form.outcome}
+                onChange={e => handleChange('outcome', e.target.value)}
+                required
+              >
+                <option value="success">success — positive evidence</option>
+                <option value="failure">failure — negative evidence</option>
+              </select>
+            </div>
+
+            {/* Severity (failure only) */}
+            <div className="col-md-6">
+              <label className="form-label text-muted small fw-semibold">
+                Severity {!isSuccess && <span className="text-danger">*</span>}
+                {isSuccess && <span className="text-muted"> (N/A for success)</span>}
+              </label>
+              <select
+                id="evidence-severity"
+                className="form-select bg-black text-light border-secondary"
+                value={form.severity}
+                onChange={e => handleChange('severity', e.target.value)}
+                disabled={isSuccess}
+                required={!isSuccess}
+              >
+                <option value="">Select severity...</option>
+                <option value="1">1 — Low</option>
+                <option value="2">2 — Medium-Low</option>
+                <option value="4">4 — Medium</option>
+                <option value="8">8 — High</option>
+                <option value="16">16 — Critical</option>
+              </select>
+            </div>
+
+            {/* Evidence Quality */}
+            <div className="col-md-6">
+              <label className="form-label text-muted small fw-semibold">
+                Evidence Quality * <span className="text-info">{parseFloat(form.evidence_quality).toFixed(2)}</span>
+              </label>
+              <input
+                id="evidence-quality"
+                type="range"
+                className="form-range"
+                min="0" max="1" step="0.05"
+                value={form.evidence_quality}
+                onChange={e => handleChange('evidence_quality', e.target.value)}
+              />
+              <div className="d-flex justify-content-between text-muted" style={{ fontSize: '0.7rem' }}>
+                <span>0.00 (Low)</span><span>1.00 (High)</span>
+              </div>
+            </div>
+
+            {/* Informative Value (success only) */}
+            <div className="col-md-6">
+              <label className="form-label text-muted small fw-semibold">
+                Informative Value {isSuccess && <span className="text-danger">*</span>}
+                {!isSuccess && <span className="text-muted"> (N/A for failure)</span>}
+                {isSuccess && <span className="text-info ms-1">{parseFloat(form.informative_value).toFixed(2)}</span>}
+              </label>
+              <input
+                id="evidence-informative-value"
+                type="range"
+                className="form-range"
+                min="0.05" max="1" step="0.05"
+                value={form.informative_value}
+                onChange={e => handleChange('informative_value', e.target.value)}
+                disabled={!isSuccess}
+              />
+              <div className="d-flex justify-content-between text-muted" style={{ fontSize: '0.7rem' }}>
+                <span>0.05</span><span>1.00</span>
+              </div>
+            </div>
+
+            {/* Optional Metadata */}
+            <div className="col-12">
+              <label className="form-label text-muted small fw-semibold">
+                Action Metadata <span className="text-muted">(optional JSON)</span>
+              </label>
+              <textarea
+                id="evidence-metadata"
+                className="form-control bg-black text-light border-secondary font-monospace"
+                rows={2}
+                placeholder='{"action": "data_access", "resource": "patient_records"}'
+                value={form.action_metadata}
+                onChange={e => handleChange('action_metadata', e.target.value)}
+                style={{ fontSize: '0.8rem' }}
+              />
+            </div>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="alert alert-danger d-flex align-items-start py-2 mt-3 small">
+              <i className="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Success result */}
+          {result && (
+            <div className="alert alert-success py-2 mt-3 small">
+              <i className="bi bi-check-circle-fill me-2"></i>
+              <strong>Evidence submitted.</strong>{' '}
+              ID: <span className="font-monospace">{result.id}</span> &mdash;{' '}
+              Outcome: <strong>{result.outcome}</strong>{' '}
+              {result.severity && <>Severity: <strong>{result.severity}</strong></>}
+            </div>
+          )}
+
+          <div className="mt-3">
+            <button
+              id="submit-evidence-btn"
+              type="submit"
+              className="btn btn-info"
+              disabled={submitting || !agentId}
+            >
+              {submitting
+                ? <><span className="spinner-border spinner-border-sm me-2" role="status"></span>Submitting...</>
+                : <><i className="bi bi-send me-2"></i>Submit Evidence</>
+              }
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ─── Main Trust Page ─────────────────────────────────────────────────────────
 export const Trust = () => {
   const [agents, setAgents] = useState([]);
   const [selectedAgent, setSelectedAgent] = useState('');
@@ -35,7 +250,7 @@ export const Trust = () => {
     return () => { isMounted = false; };
   }, []);
 
-  const fetchTrust = async (agentId) => {
+  const fetchTrust = useCallback(async (agentId) => {
     if (!agentId) return;
     try {
       setLoadingTrust(true);
@@ -73,7 +288,7 @@ export const Trust = () => {
     } finally {
       setLoadingTrust(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (selectedAgent) {
@@ -82,7 +297,6 @@ export const Trust = () => {
       setTrustData(null);
       setError(null);
     }
-    // We intentionally don't want this to run again unless selectedAgent changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgent]);
 
@@ -102,7 +316,6 @@ export const Trust = () => {
     const uVal = trustData.uncertainty;
     const rRisk = trustData.recent_risk;
 
-    // Direct percentage strings for visual widths and text display
     const bPct = (bVal * 100).toFixed(1) + '%';
     const dPct = (dVal * 100).toFixed(1) + '%';
     const uPct = (uVal * 100).toFixed(1) + '%';
@@ -229,7 +442,7 @@ export const Trust = () => {
                   disabled={!selectedAgent || loadingTrust}
                 >
                   {loadingTrust ? <span className="spinner-border spinner-border-sm me-2" role="status"></span> : <i className="bi bi-arrow-clockwise me-2"></i>}
-                  Refresh Evaluation
+                  Refresh
                 </button>
               </div>
             </div>
@@ -258,6 +471,14 @@ export const Trust = () => {
           <p className="text-muted mb-0">No agent selected.</p>
           <small className="text-muted">Select an agent above to view its trust state.</small>
         </div>
+      )}
+
+      {/* Evidence Submission Form — only shown when an agent is selected */}
+      {selectedAgent && !loadingAgents && (
+        <EvidenceForm
+          agentId={selectedAgent}
+          onSuccess={handleRefresh}
+        />
       )}
     </div>
   );

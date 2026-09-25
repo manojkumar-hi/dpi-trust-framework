@@ -53,7 +53,7 @@ def _audit(db: Session, event_type: str, decision: str, reason_code: str, actor_
         action_requested="vp_authentication",
         authorization_decision=decision,
         reason_code=reason_code,
-        event_details=kwargs
+        event_metadata=kwargs if kwargs else None
     )
     AuditService.create_audit_record(db, record)
 
@@ -71,7 +71,7 @@ def create_challenge(db: Session, expires_in_seconds: int = 300) -> Challenge:
     db.commit()
     db.refresh(challenge)
 
-    _audit(db, "challenge_created", "ALLOW", "SUCCESS", event_details={"challenge_id": str(challenge.id), "audience": challenge.audience})
+    _audit(db, "challenge_created", "ALLOW", "SUCCESS", challenge_id=str(challenge.id), audience=challenge.audience)
     return challenge
 
 
