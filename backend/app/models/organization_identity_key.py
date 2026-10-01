@@ -24,6 +24,7 @@ class OrganizationIdentityKey(Base):
             "organization_identity_id",
             unique=True,
             postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
         ),
     )
 

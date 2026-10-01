@@ -45,6 +45,16 @@ CAPABILITY_CATALOG: Mapping[str, CapabilityDefinition] = MappingProxyType(
             resource_type="agent",
             description="Manage agent lifecycle",
         ),
+        "hr.read_policies": CapabilityDefinition(
+            code="hr.read_policies",
+            resource_type="hr_policy",
+            description="Read HR policies",
+        ),
+        "hr.calculate_leave_balance": CapabilityDefinition(
+            code="hr.calculate_leave_balance",
+            resource_type="hr_leave",
+            description="Calculate employee leave balance",
+        ),
     }
 )
 

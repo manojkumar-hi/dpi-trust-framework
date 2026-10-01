@@ -4,16 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
-from app.schemas.agent_identity import AgentIdentityResponse
+from app.schemas.agent_identity import AgentIdentityResponse, AgentIdentityCreateRequest, AgentIdentityRekeyRequest
 from app.services.identity_service import (
     IdentityAlreadyExistsError,
     create_identity,
+    rekey_identity,
     get_agent,
     get_identity_for_agent,
 )
 
 router = APIRouter(prefix="/agents", tags=["Agent Identity"])
-
 
 from app.api.dependencies import Principal, get_current_principal
 
@@ -24,9 +24,11 @@ from app.api.dependencies import Principal, get_current_principal
     responses={
         404: {"description": "Agent not found"},
         409: {"description": "Agent identity already exists"},
+        400: {"description": "Invalid public key"},
     },
 )
 def create_agent_identity(
+    request: AgentIdentityCreateRequest | None = None,
     agent_id: UUID = Path(...), 
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_principal)
@@ -37,12 +39,47 @@ def create_agent_identity(
     if principal.organization_id != agent.organization_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create identity for this agent")
     try:
-        return create_identity(db, agent_id)
+        public_key_b64 = request.public_key_b64 if request else None
+        return create_identity(db, agent_id, public_key_b64=public_key_b64)
     except IdentityAlreadyExistsError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An identity already exists for this agent",
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post(
+    "/{agent_id}/identity/rekey",
+    response_model=AgentIdentityResponse,
+    responses={
+        404: {"description": "Agent or identity not found"},
+        400: {"description": "Invalid public key"},
+    },
+)
+def rekey_agent_identity(
+    request: AgentIdentityRekeyRequest | None = None,
+    agent_id: UUID = Path(...), 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
+) -> AgentIdentityResponse:
+    agent = get_agent(db, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if principal.organization_id != agent.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to rekey identity for this agent")
+    
+    identity = get_identity_for_agent(db, agent_id)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent identity not found")
+        
+    try:
+        public_key_b64 = request.public_key_b64 if request else None
+        return rekey_identity(db, agent_id, public_key_b64=public_key_b64)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
 
 
 @router.get(

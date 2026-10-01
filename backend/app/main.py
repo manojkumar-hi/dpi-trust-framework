@@ -18,6 +18,7 @@ from app.api.organization_identity_resolution import (
 from app.api.delegations import router as delegations_router
 from app.api.trust import router as trust_router
 from app.api.audit import router as audit_router
+from app.api.action_gateway import router as action_gateway_router
 from app.core.config import get_settings
 from app.database.base import Base
 from app.database.connection import engine
@@ -77,3 +78,4 @@ app.include_router(organization_identity_resolution_router)
 app.include_router(delegations_router)
 app.include_router(trust_router)
 app.include_router(audit_router)
+app.include_router(action_gateway_router)

@@ -4,6 +4,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class AgentIdentityCreateRequest(BaseModel):
+    public_key_b64: str | None = Field(
+        None, 
+        description="Base64 encoded raw Ed25519 public key. If provided, the framework will use this key (BYOK). If omitted, the framework will generate a key for backwards compatibility."
+    )
+
+class AgentIdentityRekeyRequest(BaseModel):
+    public_key_b64: str | None = Field(
+        None, 
+        description="Base64 encoded raw Ed25519 public key. If provided, the framework will use this key (BYOK). If omitted, the framework will generate a key for backwards compatibility."
+    )
+
 class AgentIdentityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

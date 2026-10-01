@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.delegation import Delegation
     from app.models.organization import Organization
     from app.models.verifiable_credential import VerifiableCredential
+    from app.models.agent_template_decision import AgentTemplateDecision
 
 
 class Agent(Base):
@@ -26,6 +27,8 @@ class Agent(Base):
     agent_type: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    template_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    template_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -41,4 +44,7 @@ class Agent(Base):
     incoming_delegations: Mapped[list["Delegation"]] = relationship(
         back_populates="delegatee_agent",
         foreign_keys="Delegation.delegatee_agent_id",
+    )
+    template_decisions: Mapped[list["AgentTemplateDecision"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
     )

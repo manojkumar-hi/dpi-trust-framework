@@ -15,6 +15,23 @@ def compile_jsonb(type_, compiler, **kw):
 from app.database.base import Base
 from app.database.connection import get_db
 from app.main import app
+
+from app.api.dependencies import Principal, get_current_principal
+from fastapi import Request
+
+@pytest.fixture(autouse=True)
+def override_principal_dependency():
+    def _override(request: Request):
+        mock_org_id = request.headers.get("X-Mock-Principal-Org-Id")
+        if mock_org_id:
+            from uuid import UUID
+            return Principal(organization_id=UUID(mock_org_id))
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Missing mock header")
+    app.dependency_overrides[get_current_principal] = _override
+    yield
+    app.dependency_overrides.pop(get_current_principal, None)
+
 from app.models.agent import Agent
 from app.models.organization import Organization
 from app.models.audit_record import AuditRecord

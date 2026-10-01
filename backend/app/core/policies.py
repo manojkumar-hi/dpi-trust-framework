@@ -57,5 +57,16 @@ POLICY_CATALOG = [
         max_uncertainty=0.8,
         required_capability=None,
         requires_delegation=True
+    ),
+    # LangChain tool execution
+    PolicyRule(
+        resource_type="agent",
+        action="langchain.tool.add",
+        action_risk=0.1,
+        required_trust=0.0,
+        max_recent_risk=0.9,
+        max_uncertainty=1.0,
+        required_capability=None,
+        requires_delegation=False
     )
 ]

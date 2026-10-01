@@ -2,7 +2,7 @@ import base64
 from datetime import datetime, timezone
 from uuid import UUID
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -30,7 +30,22 @@ def get_identity_for_agent(db: Session, agent_id: UUID) -> AgentIdentity | None:
     return db.scalar(select(AgentIdentity).where(AgentIdentity.agent_id == agent_id))
 
 
-def create_identity(db: Session, agent_id: UUID) -> AgentIdentity:
+def validate_ed25519_public_key_b64(public_key_b64: str) -> None:
+    try:
+        public_key_bytes = base64.b64decode(public_key_b64)
+    except Exception:
+        raise ValueError("Public key must be valid Base64")
+    
+    if len(public_key_bytes) != 32:
+        raise ValueError("Raw Ed25519 public key must be exactly 32 bytes")
+        
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key_bytes)
+    except Exception:
+        raise ValueError("Invalid Ed25519 public key")
+
+
+def create_identity(db: Session, agent_id: UUID, public_key_b64: str | None = None) -> AgentIdentity:
     if get_identity_for_agent(db, agent_id) is not None:
         raise IdentityAlreadyExistsError
 
@@ -38,9 +53,13 @@ def create_identity(db: Session, agent_id: UUID) -> AgentIdentity:
     if agent is None or agent.organization is None:
         raise ValueError("Agent or Organization not found")
 
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    public_key_b64 = base64.b64encode(public_key).decode("ascii")
+    if public_key_b64 is not None:
+        validate_ed25519_public_key_b64(public_key_b64)
+    else:
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        public_key_b64 = base64.b64encode(public_key).decode("ascii")
+
     now = datetime.now(timezone.utc)
 
     from app.core.config import get_settings
@@ -71,14 +90,18 @@ def create_identity(db: Session, agent_id: UUID) -> AgentIdentity:
     return identity
 
 
-def rekey_identity(db: Session, agent_id: UUID) -> AgentIdentity:
+def rekey_identity(db: Session, agent_id: UUID, public_key_b64: str | None = None) -> AgentIdentity:
     identity = get_identity_for_agent(db, agent_id)
     if identity is None:
         raise ValueError("Agent identity not found")
 
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    public_key_b64 = base64.b64encode(public_key).decode("ascii")
+    if public_key_b64 is not None:
+        validate_ed25519_public_key_b64(public_key_b64)
+    else:
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        public_key_b64 = base64.b64encode(public_key).decode("ascii")
+
     now = datetime.now(timezone.utc)
 
     previous_key = db.scalar(

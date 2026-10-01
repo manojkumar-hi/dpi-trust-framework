@@ -10,6 +10,7 @@ from app.database.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
+    from app.models.agent_action_log import AgentActionLog
 
 
 class BehavioralEvidence(Base):
@@ -18,6 +19,9 @@ class BehavioralEvidence(Base):
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     agent_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("agents.id"), nullable=False, index=True
+    )
+    action_log_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("agent_action_logs.id"), nullable=True
     )
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     outcome: Mapped[str] = mapped_column(String(50), nullable=False)  # 'success' or 'failure'
@@ -28,3 +32,4 @@ class BehavioralEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     agent: Mapped["Agent"] = relationship(backref="behavioral_evidence")
+    action_log: Mapped["AgentActionLog"] = relationship(back_populates="evidence")

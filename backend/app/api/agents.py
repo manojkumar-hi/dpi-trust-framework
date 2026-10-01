@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
-from app.schemas.agent import AgentCreate, AgentResponse
+from app.schemas.agent import AgentCreate, AgentResponse, AgentTemplateRegistrationRequest
 from app.schemas.delegation import DelegationResponse
 
-from app.services.agent_service import create_agent, get_agent, get_agents
+from app.services.agent_service import create_agent, get_agent, get_agents, register_agent_from_template
 from app.services.delegation_service import get_delegations
 from app.services.organization_service import get_organization
 from app.api.dependencies import Principal, get_current_principal
@@ -26,6 +26,19 @@ def create_agent_endpoint(
     if get_organization(db, agent_data.organization_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     return create_agent(db, agent_data)
+
+
+@router.post("/register-template", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
+async def register_template_endpoint(
+    request: AgentTemplateRegistrationRequest, 
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal)
+) -> AgentResponse:
+    if principal.organization_id != request.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create agents for this organization")
+    if get_organization(db, request.organization_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    return await register_agent_from_template(db, principal, request)
 
 
 @router.get("", response_model=list[AgentResponse])

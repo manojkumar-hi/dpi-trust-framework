@@ -1,7 +1,9 @@
 from app.models.agent_identity import AgentIdentity
 from app.models.agent_identity_key import AgentIdentityKey
 from app.models.agent import Agent
+from app.models.agent_action_log import AgentActionLog
 from app.models.agent_trust_state import AgentTrustState
+from app.models.agent_template_decision import AgentTemplateDecision
 from app.models.behavioral_evidence import BehavioralEvidence
 from app.models.delegation import Delegation
 from app.models.delegation_capability import DelegationCapability
@@ -17,8 +19,10 @@ from app.models.challenge import Challenge
 from app.models.bitstring_status_list import BitstringStatusList
 __all__ = [
     "Agent",
+    "AgentActionLog",
     "AgentIdentity",
     "AgentIdentityKey",
+    "AgentTemplateDecision",
     "AgentTrustState",
     "AuditRecord",
     "BehavioralEvidence",
