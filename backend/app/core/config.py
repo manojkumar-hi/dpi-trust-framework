@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str
     fabric_adapter_url: str = "http://localhost:8081"
     fabric_adapter_timeout_seconds: float = 10.0
+    opa_url: str = "http://localhost:8181"
+    opa_timeout_seconds: float = 5.0
 
     # Module 13 Authentication Settings
     auth_jwt_issuer: str = "https://auth.dpi-trust.local"
@@ -17,6 +19,7 @@ class Settings(BaseSettings):
     auth_static_public_key: str | None = None  # For dev/test
     auth_static_private_key: str | None = None # For issuing tokens
     auth_clock_skew_seconds: int = 60
+    auth_access_token_expiry_seconds: int = 86400
     auth_dev_login_enabled: bool = False
 
     # Module 15.4 Verifier Identity

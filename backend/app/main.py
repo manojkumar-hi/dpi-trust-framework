@@ -1,6 +1,8 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app import models
 from app.api.agents import router as agents_router
@@ -19,6 +21,7 @@ from app.api.delegations import router as delegations_router
 from app.api.trust import router as trust_router
 from app.api.audit import router as audit_router
 from app.api.action_gateway import router as action_gateway_router
+from app.api.authorization import router as authorization_router
 from app.core.config import get_settings
 from app.database.base import Base
 from app.database.connection import engine
@@ -48,13 +51,29 @@ app.add_middleware(CorrelationIdMiddleware)
 
 from fastapi.middleware.cors import CORSMiddleware
 
+logger = logging.getLogger(__name__)
+
 if settings.cors_allowed_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Idempotency-Key", "Content-Type"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=getattr(exc, "headers", None),
+        )
+    logger.exception("Unhandled server exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {exc}"},
     )
 
 from app.api.did_web import router as did_web_router
@@ -79,3 +98,4 @@ app.include_router(delegations_router)
 app.include_router(trust_router)
 app.include_router(audit_router)
 app.include_router(action_gateway_router)
+app.include_router(authorization_router)

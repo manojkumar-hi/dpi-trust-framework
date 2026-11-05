@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
+from app.api.dependencies import Principal, get_current_principal
 from app.schemas.audit import AuditRecordResponse
 from app.services.audit_service import AuditService
 
@@ -17,6 +18,7 @@ def get_audit_logs(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
 ) -> list[AuditRecordResponse]:
     """
     Read-only endpoint to retrieve audit records.
@@ -26,6 +28,7 @@ def get_audit_logs(
         db,
         correlation_id=correlation_id,
         subject_agent_id=subject_agent_id,
+        organization_id=principal.organization_id,
         limit=limit,
         offset=offset
     )

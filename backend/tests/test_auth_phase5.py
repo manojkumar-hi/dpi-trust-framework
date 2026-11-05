@@ -122,7 +122,7 @@ def test_missing_token_rejected(setup_db: Session, auth_setup):
     assert res.status_code == 401, res.json()
     assert res.json()["detail"] == "TOKEN_MISSING"
 
-def test_valid_jwt_and_success_audit(setup_db: Session, auth_setup):
+def test_valid_jwt_does_not_emit_repeated_success_audit(setup_db: Session, auth_setup):
     org_id, ident_id, agent_id = auth_setup
     payload = {"iss": "https://auth.dpi-trust.local", "aud": "dpi-trust-framework", "sub": "phase5-sub", "exp": 2000000000, "nbf": 0}
     token = jwt.encode(payload, rsa_private_key, algorithm="RS256", headers={"kid": "test-kid"})
@@ -132,11 +132,8 @@ def test_valid_jwt_and_success_audit(setup_db: Session, auth_setup):
     
     from app.models.audit_record import AuditRecord
     setup_db.commit()
-    audit = setup_db.query(AuditRecord).filter(AuditRecord.event_type == "authentication_succeeded").order_by(AuditRecord.occurred_at.desc()).first()
-    assert audit is not None
-    assert audit.actor_organization_id == org_id
-    assert audit.reason_code == "AUTHENTICATED"
-    assert "token" not in str(audit.trust_snapshot).lower()
+    audit_count = setup_db.query(AuditRecord).filter(AuditRecord.event_type == "authentication_succeeded").count()
+    assert audit_count == 0
 
 def test_invalid_signature_audit(setup_db: Session, auth_setup):
     payload = {"iss": "https://auth.dpi-trust.local", "aud": "dpi-trust-framework", "sub": "phase5-sub", "exp": 2000000000, "nbf": 0}

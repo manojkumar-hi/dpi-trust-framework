@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { authApi } from '../api/auth';
 
 const AuthContext = createContext(null);
 
@@ -7,6 +8,7 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(!!accessToken);
   const [agentId, setAgentId] = useState(null);
   const [orgId, setOrgId] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
     if (accessToken) {
@@ -14,8 +16,11 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(true);
       try {
         const payload = JSON.parse(atob(accessToken.split('.')[1]));
-        setAgentId(payload.dpi_agent_id || payload.sub);
+        setAgentId(payload.dpi_agent_id || null);
         setOrgId(payload.dpi_org_id);
+        if (payload.dpi_role === 'organization_admin') {
+          authApi.currentUser().then(setCurrentUser).catch(() => setCurrentUser(null));
+        }
       } catch (e) {
         console.error("Failed to parse token payload");
       }
@@ -24,6 +29,7 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(false);
       setAgentId(null);
       setOrgId(null);
+      setCurrentUser(null);
     }
   }, [accessToken]);
 
@@ -31,12 +37,16 @@ export const AuthProvider = ({ children }) => {
     setAccessToken(token);
   };
 
-  const logout = () => {
-    setAccessToken(null);
+  const logout = async () => {
+    try {
+      if (accessToken) await authApi.logout();
+    } finally {
+      setAccessToken(null);
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ accessToken, isAuthenticated, agentId, orgId, login, logout }}>
+    <AuthContext.Provider value={{ accessToken, isAuthenticated, agentId, orgId, currentUser, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

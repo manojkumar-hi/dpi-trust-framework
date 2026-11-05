@@ -473,13 +473,6 @@ export const Trust = () => {
         </div>
       )}
 
-      {/* Evidence Submission Form — only shown when an agent is selected */}
-      {selectedAgent && !loadingAgents && (
-        <EvidenceForm
-          agentId={selectedAgent}
-          onSuccess={handleRefresh}
-        />
-      )}
     </div>
   );
 };

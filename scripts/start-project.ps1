@@ -6,7 +6,7 @@ function Test-Port {
 }
 
 function Start-Postgres {
-    Write-Host "[1/6] Checking PostgreSQL..." -ForegroundColor Cyan
+    Write-Host "[1/7] Checking PostgreSQL..." -ForegroundColor Cyan
     $status = docker inspect -f '{{.State.Status}}' dpi-postgres 2>$null
     if ($status -ne 'running') {
         Write-Host "Starting dpi-postgres container..."
@@ -16,8 +16,22 @@ function Start-Postgres {
     }
 }
 
+function Start-Opa {
+    Write-Host "[2/7] Starting Open Policy Agent..." -ForegroundColor Cyan
+    $status = docker inspect -f '{{.State.Status}}' dpi-opa 2>$null
+    if ($status -ne 'running') {
+        if ($status) {
+            docker start dpi-opa
+        } else {
+            docker compose -f (Join-Path $PWD "infrastructure/docker/compose.yaml") up -d opa
+        }
+    } else {
+        Write-Host "dpi-opa is already running."
+    }
+}
+
 function Start-Fabric {
-    Write-Host "[2/6] Starting Fabric Containers..." -ForegroundColor Cyan
+    Write-Host "[3/7] Starting Fabric Containers..." -ForegroundColor Cyan
     $nodes = @("orderer.example.com", "peer0.org1.example.com", "peer0.org2.example.com")
     foreach ($node in $nodes) {
         $status = docker inspect -f '{{.State.Status}}' $node 2>$null
@@ -32,7 +46,7 @@ function Start-Fabric {
     $chaincodes = docker ps -a --format "{{.Names}}" | Select-String "dev-peer.*trustledger"
     if ($chaincodes) {
         foreach ($cc in $chaincodes) {
-            $ccName = $cc.Line
+            $ccName = [string]$cc.Line
             $ccStatus = docker inspect -f '{{.State.Status}}' $ccName 2>$null
             if ($ccStatus -ne 'running') {
                 Write-Host "Starting chaincode container $ccName..."
@@ -48,7 +62,7 @@ function Wait-ForFabric {
 }
 
 function Start-FabricGateway {
-    Write-Host "[3/6] Starting Fabric Gateway..." -ForegroundColor Cyan
+    Write-Host "[4/7] Starting Fabric Gateway..." -ForegroundColor Cyan
     if (Test-Port -Port 8081) {
         Write-Host "Fabric Gateway is already listening on port 8081."
     } else {
@@ -59,7 +73,7 @@ function Start-FabricGateway {
 }
 
 function Start-Backend {
-    Write-Host "[4/6] Starting FastAPI..." -ForegroundColor Cyan
+    Write-Host "[5/7] Starting FastAPI..." -ForegroundColor Cyan
     if (Test-Port -Port 8000) {
         Write-Host "FastAPI is already listening on port 8000."
     } else {
@@ -70,7 +84,7 @@ function Start-Backend {
 }
 
 function Start-Frontend {
-    Write-Host "[5/6] Starting React/Vite..." -ForegroundColor Cyan
+    Write-Host "[6/7] Starting React/Vite..." -ForegroundColor Cyan
     if (Test-Port -Port 5173) {
         Write-Host "React is already listening on port 5173."
     } else {
@@ -82,18 +96,19 @@ function Start-Frontend {
 }
 
 function Test-ProjectHealth {
-    Write-Host "[6/6] Verifying Project Health..." -ForegroundColor Cyan
+    Write-Host "[7/7] Verifying Project Health..." -ForegroundColor Cyan
     $retries = 20
     $waitMs = 2000
     $servicesReady = $false
 
     for ($i = 1; $i -le $retries; $i++) {
         $postgresReady = Test-Port -Port 5432
+        $opaReady = Test-Port -Port 8181
         $gatewayReady = Test-Port -Port 8081
         $fastapiReady = Test-Port -Port 8000
         $reactReady = Test-Port -Port 5173
 
-        if ($postgresReady -and $gatewayReady -and $fastapiReady -and $reactReady) {
+        if ($postgresReady -and $opaReady -and $gatewayReady -and $fastapiReady -and $reactReady) {
             $servicesReady = $true
             break
         }
@@ -104,6 +119,7 @@ function Test-ProjectHealth {
     if (-not $servicesReady) {
         Write-Host "Error: One or more services failed to become ready in time." -ForegroundColor Red
         Write-Host "PostgreSQL (5432) : $postgresReady"
+        Write-Host "OPA        (8181) : $opaReady"
         Write-Host "Gateway    (8081) : $gatewayReady"
         Write-Host "FastAPI    (8000) : $fastapiReady"
         Write-Host "React      (5173) : $reactReady"
@@ -146,6 +162,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Start-Postgres
+Start-Opa
 Start-Fabric
 Wait-ForFabric
 Start-FabricGateway

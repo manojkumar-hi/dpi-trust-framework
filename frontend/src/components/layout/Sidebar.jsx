@@ -7,8 +7,8 @@ export const Sidebar = () => {
     { path: '/agents', label: 'Agents', icon: 'robot' },
     { path: '/credentials', label: 'Credentials', icon: 'card-heading' },
     { path: '/delegations', label: 'Delegations', icon: 'diagram-3' },
+    { path: '/pre-authorization', label: 'Pre-Authorization', icon: 'shield-lock' },
     { path: '/trust', label: 'Trust', icon: 'shield-check' },
-    { path: '/verification', label: 'Verification', icon: 'check2-all' },
     { path: '/audit', label: 'Audit', icon: 'journal-text' }
   ];
 

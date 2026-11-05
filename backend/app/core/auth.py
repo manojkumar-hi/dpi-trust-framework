@@ -1,4 +1,5 @@
 import logging
+import uuid
 import time
 from typing import Any, Dict, Optional
 
@@ -154,9 +155,20 @@ class JWTIssuer:
     def __init__(self):
         self.settings = get_settings()
 
-    def issue_token(self, subject: str, org_id: str, agent_id: str | None = None, expires_in_seconds: int = 3600) -> str:
+    def issue_token(
+        self,
+        subject: str,
+        org_id: str,
+        agent_id: str | None = None,
+        admin_id: str | None = None,
+        role: str | None = None,
+        expires_in_seconds: int | None = None,
+    ) -> str:
         if not self.settings.auth_static_private_key:
             raise RuntimeError("auth_static_private_key is not configured")
+
+        if expires_in_seconds is None:
+            expires_in_seconds = self.settings.auth_access_token_expiry_seconds
 
         priv_key_pem = self.settings.auth_static_private_key.replace('\\n', '\n')
         private_key = serialization.load_pem_private_key(
@@ -169,12 +181,17 @@ class JWTIssuer:
             "iss": self.settings.auth_jwt_issuer,
             "aud": self.settings.auth_jwt_audience,
             "sub": subject,
+            "jti": str(uuid.uuid4()),
             "dpi_org_id": org_id,
             "iat": now,
             "exp": now + expires_in_seconds
         }
         if agent_id:
             payload["dpi_agent_id"] = agent_id
+        if admin_id:
+            payload["dpi_admin_id"] = admin_id
+        if role:
+            payload["dpi_role"] = role
 
         return jwt.encode(payload, private_key, algorithm="RS256")
 

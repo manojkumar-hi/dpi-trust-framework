@@ -17,21 +17,27 @@ def mock_fabric_ledger_client(monkeypatch):
 @pytest.fixture(autouse=True)
 def mock_status_list_fetch(monkeypatch):
     """Globally mock status list fetches to hit the test client, avoiding DNS errors in tests."""
-    from fastapi.testclient import TestClient
-    from app.main import app
     import app.services.status_list_service as sl_service
-    
-    sync_client = TestClient(app)
-    
+
+    _sync_client = None
+
+    def get_sync_client():
+        nonlocal _sync_client
+        if _sync_client is None:
+            from fastapi.testclient import TestClient
+            from app.main import app
+            _sync_client = TestClient(app)
+        return _sync_client
+
     def mock_fetch(url: str):
         list_id = url.split("/")[-1]
         # Ignore query params or fragments if any
         list_id = list_id.split("#")[0]
         list_id = list_id.split("?")[0]
-        
-        res = sync_client.get(f"/.well-known/status-lists/{list_id}")
+
+        res = get_sync_client().get(f"/.well-known/status-lists/{list_id}")
         if res.status_code == 200:
             return res.content
         raise Exception(f"Not found: {url}")
-        
+
     monkeypatch.setattr(sl_service, "fetch_status_list_artifact", mock_fetch)

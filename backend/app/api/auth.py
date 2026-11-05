@@ -1,12 +1,33 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.auth import issuer
 from app.database.connection import get_db
 from app.services.vp_auth_service import create_challenge, verify_vp_and_consume_challenge, VPAuthError
+from app.api import dependencies as auth_dependencies
+from app.api.dependencies import Principal, get_current_principal
+from app.schemas.account import (
+    AdministratorTokenResponse,
+    CurrentUserResponse,
+    OrganizationRegistrationRequest,
+    OrganizationRegistrationResponse,
+    PasswordLoginRequest,
+)
+from app.services.account_service import (
+    DuplicateAdministratorError,
+    InvalidCredentialsError,
+    authenticate_administrator,
+    complete_organization_onboarding,
+    is_token_revoked,
+    issue_administrator_token,
+    register_organization,
+    revoke_token,
+)
+from app.models.organization_administrator import OrganizationAdministrator
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -48,10 +69,107 @@ def login_with_vp(request: VPLoginRequest, db: Session = Depends(get_db)):
             org_id=str(agent_identity.agent.organization_id),
             agent_id=str(agent_identity.agent.id)
         )
+        auth_dependencies._audit_auth(
+            "authentication_succeeded",
+            "ALLOW",
+            "AUTHENTICATED",
+            Principal(
+                organization_id=agent_identity.agent.organization_id,
+                agent_id=agent_identity.agent.id,
+                subject=agent_identity.did,
+            ),
+        )
         return TokenResponse(access_token=token)
 
     except VPAuthError as e:
         raise HTTPException(status_code=401, detail=e.reason_code)
+
+
+@router.post("/register", response_model=OrganizationRegistrationResponse, status_code=status.HTTP_201_CREATED)
+def register_account(request: OrganizationRegistrationRequest, db: Session = Depends(get_db)):
+    try:
+        organization, administrator = register_organization(db, request)
+    except DuplicateAdministratorError:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    return OrganizationRegistrationResponse(
+        organization_id=organization.id,
+        administrator_id=administrator.id,
+        organization_name=organization.name,
+        email=administrator.email,
+    )
+
+
+@router.post("/login", response_model=AdministratorTokenResponse)
+def login_with_password(request: PasswordLoginRequest, db: Session = Depends(get_db)):
+    try:
+        organization, administrator = authenticate_administrator(db, request.email, request.password)
+    except InvalidCredentialsError:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = issue_administrator_token(organization, administrator)
+    auth_dependencies._audit_auth(
+        "authentication_succeeded",
+        "ALLOW",
+        "AUTHENTICATED",
+        Principal(
+            organization_id=organization.id,
+            admin_id=administrator.id,
+            subject=administrator.email,
+            scopes=["organization:admin"],
+        ),
+    )
+    return AdministratorTokenResponse(
+        access_token=token,
+        onboarding_completed=organization.onboarding_completed,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(request: Request, db: Session = Depends(get_db), principal: Principal = Depends(get_current_principal)):
+    claims = getattr(request.state, "jwt_claims", None)
+    if claims and claims.get("jti"):
+        revoke_token(db, claims["jti"], datetime.fromtimestamp(claims["exp"], tz=timezone.utc))
+
+
+@router.get("/me", response_model=CurrentUserResponse)
+def current_user(db: Session = Depends(get_db), principal: Principal = Depends(get_current_principal)):
+    if principal.admin_id is None:
+        raise HTTPException(status_code=403, detail="Organization administrator account required")
+    administrator = db.get(OrganizationAdministrator, principal.admin_id)
+    if administrator is None or administrator.status != "active":
+        raise HTTPException(status_code=401, detail="Administrator account is not active")
+    return CurrentUserResponse(
+        administrator_id=administrator.id,
+        organization_id=administrator.organization_id,
+        organization_name=administrator.organization.name,
+        full_name=administrator.full_name,
+        email=administrator.email,
+        phone=administrator.phone,
+        role="organization_admin",
+        onboarding_completed=administrator.organization.onboarding_completed,
+    )
+
+
+@router.post("/onboarding/complete", response_model=CurrentUserResponse)
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
+):
+    if principal.admin_id is None:
+        raise HTTPException(status_code=403, detail="Organization administrator account required")
+    administrator = db.get(OrganizationAdministrator, principal.admin_id)
+    if administrator is None or administrator.status != "active":
+        raise HTTPException(status_code=401, detail="Administrator account is not active")
+    complete_organization_onboarding(db, administrator.organization)
+    return CurrentUserResponse(
+        administrator_id=administrator.id,
+        organization_id=administrator.organization_id,
+        organization_name=administrator.organization.name,
+        full_name=administrator.full_name,
+        email=administrator.email,
+        phone=administrator.phone,
+        role="organization_admin",
+        onboarding_completed=administrator.organization.onboarding_completed,
+    )
 
 
 class DevLoginRequest(BaseModel):
@@ -89,5 +207,11 @@ def login_dev(request: DevLoginRequest, db: Session = Depends(get_db)):
         subject=agent.identity.authentication_subject or agent.identity.did,
         org_id=str(org.id),
         agent_id=str(agent.id)
+    )
+    auth_dependencies._audit_auth(
+        "authentication_succeeded",
+        "ALLOW",
+        "AUTHENTICATED",
+        Principal(organization_id=org.id, agent_id=agent.id, subject=agent.identity.authentication_subject or agent.identity.did),
     )
     return TokenResponse(access_token=token)

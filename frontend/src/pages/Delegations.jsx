@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { delegationsApi } from '../api/delegations';
+import { agentsApi } from '../api/agents';
 import { LoadingState } from '../components/common/LoadingState';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { StatCard } from '../components/common/StatCard';
+import { CreateDelegationModal } from '../components/CreateDelegationModal';
+import { useAuth } from '../context/AuthContext';
 
-const DelegationDetailsModal = ({ delegation, onClose }) => {
+const DelegationDetailsModal = ({ delegation, onClose, onRevoked }) => {
   const [verifyResult, setVerifyResult] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [verifyError, setVerifyError] = useState(null);
@@ -13,6 +16,8 @@ const DelegationDetailsModal = ({ delegation, onClose }) => {
   const [chainLoading, setChainLoading] = useState(false);
   const [chainError, setChainError] = useState(null);
   const [showChain, setShowChain] = useState(false);
+  const [revokeLoading, setRevokeLoading] = useState(false);
+  const [revokeError, setRevokeError] = useState(null);
 
   const modalRef = useRef(null);
 
@@ -76,6 +81,22 @@ const DelegationDetailsModal = ({ delegation, onClose }) => {
       }
     } finally {
       setChainLoading(false);
+    }
+  };
+
+  const handleRevoke = async () => {
+    const reason = window.prompt('Why are you revoking this delegation?', 'No longer required');
+    if (!reason?.trim()) return;
+    try {
+      setRevokeLoading(true);
+      setRevokeError(null);
+      const revoked = await delegationsApi.revokeDelegation(delegation.id, reason.trim());
+      onRevoked(revoked);
+      onClose();
+    } catch (err) {
+      setRevokeError(err.response?.data?.detail || 'The delegation could not be revoked.');
+    } finally {
+      setRevokeLoading(false);
     }
   };
 
@@ -246,6 +267,11 @@ const DelegationDetailsModal = ({ delegation, onClose }) => {
             <div className="card-header border-secondary bg-transparent d-flex justify-content-between align-items-center flex-wrap gap-2">
               <h6 className="mb-0 text-light"><i className="bi bi-check2-circle me-2"></i>Delegation Verification</h6>
               <div>
+                {delegation.status === 'active' && (
+                  <button className="btn btn-sm btn-outline-danger me-2" onClick={handleRevoke} disabled={revokeLoading}>
+                    {revokeLoading ? 'Revoking…' : 'Revoke Delegation'}
+                  </button>
+                )}
                 <button className="btn btn-sm btn-outline-info me-2" onClick={handleViewChain} disabled={chainLoading}>
                   {chainLoading ? <span className="spinner-border spinner-border-sm" role="status"></span> : (showChain ? 'Hide Chain' : 'View Chain')}
                 </button>
@@ -295,6 +321,12 @@ const DelegationDetailsModal = ({ delegation, onClose }) => {
               </div>
             )}
 
+            {revokeError && (
+              <div className="card-body bg-danger bg-opacity-10">
+                <div className="text-danger small"><i className="bi bi-exclamation-triangle me-2"></i>{revokeError}</div>
+              </div>
+            )}
+
             {verifyResult && (
               <div className="card-body">
                 <div className="row">
@@ -330,7 +362,9 @@ const DelegationDetailsModal = ({ delegation, onClose }) => {
 };
 
 export const Delegations = () => {
+  const { orgId } = useAuth();
   const [delegations, setDelegations] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -340,6 +374,7 @@ export const Delegations = () => {
   
   // Modal state
   const [selectedDelegation, setSelectedDelegation] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -348,9 +383,13 @@ export const Delegations = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await delegationsApi.getDelegations();
+        const [data, agentRecords] = await Promise.all([
+          delegationsApi.getDelegations(),
+          agentsApi.getAgents(orgId),
+        ]);
         if (isMounted) {
           setDelegations(data);
+          setAgents(agentRecords);
         }
       } catch (err) {
         if (isMounted) {
@@ -374,7 +413,7 @@ export const Delegations = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [orgId, showCreateModal]);
 
   // Derived stats
   const totalDels = delegations.length;
@@ -404,6 +443,8 @@ export const Delegations = () => {
     });
   }, [delegations, searchTerm, statusFilter]);
 
+  const agentName = (agentId) => agents.find((agent) => agent.id === agentId)?.name || 'Unknown agent';
+
   return (
     <div className="container-fluid position-relative">
       <style>{`
@@ -413,11 +454,17 @@ export const Delegations = () => {
       `}</style>
       
       <div className="row mb-4">
-        <div className="col-12">
-          <h2 className="mb-1 fw-bold">Delegation & Authority</h2>
-          <p className="text-muted fs-6 mb-0">Delegated capabilities and authority relationships within the trust framework.</p>
+        <div className="col-12 d-flex justify-content-between align-items-center">
+          <div>
+            <h2 className="mb-1 fw-bold">Delegation & Authority</h2>
+            <p className="text-muted fs-6 mb-0">Delegated capabilities and authority relationships within the trust framework.</p>
+          </div>
+          <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+            <i className="bi bi-shield-plus me-2"></i>Grant Authority
+          </button>
         </div>
       </div>
+
       
       {loading ? (
         <LoadingState message="Loading delegation registry..." />
@@ -459,7 +506,7 @@ export const Delegations = () => {
                   <input 
                     type="text" 
                     className="form-control bg-dark border-secondary text-light" 
-                    placeholder="Search ID, Purpose, DID, Code..." 
+                    placeholder="Search agent or ID..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
@@ -490,12 +537,8 @@ export const Delegations = () => {
                   <table className="table table-dark table-hover mb-0 align-middle">
                     <thead>
                       <tr>
-                        <th className="border-secondary px-3 py-3">ID & Purpose</th>
-                        <th className="border-secondary py-3">Delegator</th>
-                        <th className="border-secondary py-3">Delegatee</th>
-                        <th className="border-secondary py-3">Capabilities</th>
+                        <th className="border-secondary px-3 py-3">Agent</th>
                         <th className="border-secondary py-3">Status</th>
-                        <th className="border-secondary py-3">Validity</th>
                         <th className="border-secondary px-3 py-3 text-end">Actions</th>
                       </tr>
                     </thead>
@@ -503,40 +546,13 @@ export const Delegations = () => {
                       {filteredDelegations.map(del => (
                         <tr key={del.id}>
                           <td className="border-secondary px-3">
-                            <div className="text-light fw-semibold mb-1">{del.purpose}</div>
-                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={del.id}>{del.id}</span>
-                          </td>
-                          <td className="border-secondary">
-                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={del.delegator_did || del.delegator_organization_id}>
-                              {del.delegator_did || del.delegator_organization_id}
-                            </span>
-                          </td>
-                          <td className="border-secondary">
-                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={del.delegatee_did || del.delegatee_agent_id}>
-                              {del.delegatee_did || del.delegatee_agent_id}
-                            </span>
-                          </td>
-                          <td className="border-secondary">
-                            {del.capabilities && del.capabilities.length > 0 ? (
-                              <div className="d-flex flex-wrap gap-1">
-                                {del.capabilities.map((cap, idx) => (
-                                  <span key={idx} className="badge bg-secondary">{cap.capability_code}</span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-muted small">None</span>
-                            )}
+                            <div className="text-light fw-semibold">{agentName(del.delegatee_agent_id)}</div>
+                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={del.delegatee_agent_id}>{del.delegatee_agent_id}</span>
                           </td>
                           <td className="border-secondary"><StatusBadge status={del.status} /></td>
-                          <td className="border-secondary text-muted small">
-                            <div><i className="bi bi-calendar me-1"></i> {new Date(del.starts_at).toLocaleDateString()}</div>
-                            <div className={del.expires_at && new Date(del.expires_at) < new Date() ? 'text-danger' : ''}>
-                              <i className="bi bi-clock me-1"></i> {del.expires_at ? new Date(del.expires_at).toLocaleDateString() : 'Never'}
-                            </div>
-                          </td>
                           <td className="border-secondary px-3 text-end">
                             <button 
-                              className="btn btn-sm btn-outline-light" 
+                              className="btn btn-sm btn-primary fw-semibold px-3 shadow-sm"
                               onClick={() => setSelectedDelegation(del)}
                             >
                               View
@@ -555,8 +571,16 @@ export const Delegations = () => {
 
       {selectedDelegation && (
         <DelegationDetailsModal 
-          delegation={selectedDelegation} 
-          onClose={() => setSelectedDelegation(null)} 
+          delegation={selectedDelegation}
+          onClose={() => setSelectedDelegation(null)}
+          onRevoked={(revoked) => setDelegations((current) => current.map((item) => item.id === revoked.id ? revoked : item))}
+        />
+      )}
+
+      {showCreateModal && (
+        <CreateDelegationModal
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={() => setShowCreateModal(false)}
         />
       )}
     </div>

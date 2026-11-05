@@ -1,9 +1,11 @@
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sqlalchemy import select
@@ -25,12 +27,18 @@ from app.services.delegation_canonicalization import (
     canonical_delegation_bytes,
     delegation_hash,
 )
-from app.services.fabric_ledger_client import FabricLedgerClient
+from app.services.fabric_ledger_client import (
+    FabricLedgerClient,
+    FabricLedgerOperationError,
+    FabricLedgerUnavailableError,
+)
 from app.services.organization_key_service import load_private_key
 from app.schemas.audit import AuditRecordCreate
 from app.services.audit_service import AuditService
 from app.models.outbox import OutboxEvent
 from app.services.status_list_service import allocate_index, set_status, build_and_sign_status_list_vc
+
+logger = logging.getLogger(__name__)
 
 
 class DelegationError(Exception):
@@ -464,20 +472,39 @@ async def verify_delegation(db: Session, delegation_id: UUID) -> DelegationVerif
     message = "Delegation is valid and cryptographically verified" if valid else "Delegation verification failed"
 
     fabric_client = FabricLedgerClient()
+    fabric_result: dict[str, Any] | None = None
+    fabric_valid: bool | None = None
+
     try:
-        fabric_response = await fabric_client.verify_delegation(
-            delegation_id=delegation.id,
-            canonical_hash=calculated_hash,
-        )
+        try:
+            fabric_response = await fabric_client.verify_delegation(
+                delegation_id=delegation.id,
+                canonical_hash=calculated_hash,
+            )
+            fabric_result = fabric_response.get("result", {})
+            fabric_valid = fabric_result.get("valid") is True
+        except (FabricLedgerUnavailableError, FabricLedgerOperationError, httpx.HTTPError, Exception) as exc:
+            fabric_valid = None
+            logger.warning(
+                "Fabric ledger verification unavailable for delegation %s (%s); falling back to cryptographic verification",
+                delegation.id,
+                exc,
+            )
     finally:
         await fabric_client.close()
-    
-    fabric_result = fabric_response.get("result", {})
-    fabric_valid = fabric_result.get("valid") is True
-    
-    valid = valid and fabric_valid
-    if not fabric_valid:
-        message = f"Fabric validation failed: {fabric_result.get('reason', 'Unknown error')}"
+
+    if fabric_valid is True:
+        valid = valid and True
+        if valid:
+            message = "Delegation is valid and verified against Fabric ledger"
+    elif fabric_valid is False:
+        valid = False
+        fabric_reason = fabric_result.get("reason", "Unknown error") if fabric_result else "Unknown error"
+        message = f"Fabric validation failed: {fabric_reason}"
+    else:
+        # Fabric ledger unavailable or sync pending; keep cryptographic verification result
+        if valid:
+            message = "Delegation is cryptographically verified (Fabric ledger offline)"
 
     return DelegationVerificationResult(
         delegation_id=delegation.id,

@@ -1,9 +1,10 @@
 import copy
 from typing import Any, Dict
 from uuid import UUID
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.models.agent import Agent
 from app.models.audit_record import AuditRecord
 from app.schemas.audit import AuditRecordCreate
 from app.core.correlation import get_correlation_id
@@ -72,6 +73,7 @@ class AuditService:
         db: Session,
         correlation_id: str | None = None,
         subject_agent_id: UUID | None = None,
+        organization_id: UUID | None = None,
         limit: int = 100,
         offset: int = 0
     ) -> list[AuditRecord]:
@@ -81,6 +83,15 @@ class AuditService:
             query = query.where(AuditRecord.correlation_id == correlation_id)
         if subject_agent_id:
             query = query.where(AuditRecord.subject_agent_id == subject_agent_id)
+
+        if organization_id:
+            organization_agents = select(Agent.id).where(Agent.organization_id == organization_id)
+            query = query.where(
+                or_(
+                    AuditRecord.actor_organization_id == organization_id,
+                    AuditRecord.subject_agent_id.in_(organization_agents),
+                )
+            )
             
         query = query.limit(limit).offset(offset)
         return list(db.scalars(query).all())

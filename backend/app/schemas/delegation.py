@@ -61,6 +61,8 @@ class DelegationResponse(BaseModel):
     signed_at: datetime
     canonical_hash: str
     fabric_transaction_id: str | None = None
+    status_list_id: UUID | None = None
+    status_list_index: int | None = None
     created_at: datetime
     updated_at: datetime
     capabilities: list[DelegationCapabilityResponse]

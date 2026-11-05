@@ -10,6 +10,8 @@ import { Trust } from '../pages/Trust';
 import { Verification } from '../pages/Verification';
 import { Audit } from '../pages/Audit';
 import { SignIn } from '../pages/SignIn';
+import { AgentOnboarding } from '../pages/AgentOnboarding';
+import { PreAuthorization } from '../pages/PreAuthorization';
 import { useAuth } from '../context/AuthContext';
 
 const NotFound = () => (
@@ -35,9 +37,11 @@ export const AppRoutes = () => {
       <Route path="/login" element={<SignIn />} />
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/onboarding" element={<AgentOnboarding />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/credentials" element={<Credentials />} />
         <Route path="/delegations" element={<Delegations />} />
+        <Route path="/pre-authorization" element={<PreAuthorization />} />
         <Route path="/trust" element={<Trust />} />
         <Route path="/verification" element={<Verification />} />
         <Route path="/audit" element={<Audit />} />

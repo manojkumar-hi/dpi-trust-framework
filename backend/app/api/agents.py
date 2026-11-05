@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
@@ -8,12 +9,45 @@ from app.schemas.agent import AgentCreate, AgentResponse, AgentTemplateRegistrat
 from app.schemas.delegation import DelegationResponse
 
 from app.services.agent_service import create_agent, get_agent, get_agents, register_agent_from_template
+from app.services.agent_templates.registry import list_templates
 from app.services.delegation_service import get_delegations
 from app.services.organization_service import get_organization
 from app.api.dependencies import Principal, get_current_principal
+from app.schemas.agent import AgentTemplateSchema
+from app.models.agent_action_log import AgentActionLog
+
+from datetime import datetime
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/agents", tags=["Agent Registry"])
 
+
+class AgentActionHistoryItem(BaseModel):
+    execution_id: str
+    action_type: str
+    status: str
+    timestamp: datetime
+
+
+@router.get("/{agent_id}/actions", response_model=list[AgentActionHistoryItem])
+def get_agent_action_history(
+    agent_id: UUID,
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
+) -> list[AgentActionHistoryItem]:
+    agent = get_agent(db, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if principal.organization_id != agent.organization_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this agent's action history")
+    records = db.scalars(
+        select(AgentActionLog)
+        .where(AgentActionLog.source_agent_id == agent_id)
+        .order_by(AgentActionLog.timestamp.desc())
+        .limit(limit)
+    ).all()
+    return [AgentActionHistoryItem.model_validate(record, from_attributes=True) for record in records]
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
 def create_agent_endpoint(
@@ -26,6 +60,23 @@ def create_agent_endpoint(
     if get_organization(db, agent_data.organization_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     return create_agent(db, agent_data)
+
+
+@router.get("/templates", response_model=list[AgentTemplateSchema])
+def list_agent_templates() -> list[AgentTemplateSchema]:
+    templates = list_templates()
+    return [
+        AgentTemplateSchema(
+            template_id=t.template_id,
+            template_version=t.template_version,
+            display_name=t.display_name,
+            description=t.description,
+            system_prompt=t.system_prompt,
+            tools=[{"name": tool.name, "description": tool.description, "capability_code": tool.capability_code} for tool in t.tools]
+        )
+        for t in templates
+    ]
+
 
 
 @router.post("/register-template", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)

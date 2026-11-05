@@ -71,6 +71,11 @@ def patch_delegation_service(monkeypatch):
     from unittest.mock import MagicMock
     monkeypatch.setattr(app.api.authorization_dependency, "SessionLocal", MagicMock())
 
+    from app.services.authorization_engine import AuthorizationEngine
+    async def mock_opa(inp):
+        return AuthorizationEngine.evaluate(inp)
+    monkeypatch.setattr(app.api.authorization_dependency, "evaluate_with_opa", mock_opa)
+
 engine = create_engine(
     "sqlite:///:memory:",
     connect_args={"check_same_thread": False},

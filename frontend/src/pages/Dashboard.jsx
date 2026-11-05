@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { StatCard } from '../components/common/StatCard';
 import { dashboardApi } from '../api/dashboard';
 import { LoadingState } from '../components/common/LoadingState';
 import { useAuth } from '../context/AuthContext';
+import { agentsApi } from '../api/agents';
 
 export const Dashboard = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, orgId, currentUser } = useAuth();
   const [data, setData] = useState({
     organizations: null,
     agents: null,
@@ -51,7 +53,7 @@ export const Dashboard = () => {
 
       await Promise.allSettled([
         fetchMetric('organizations', dashboardApi.getOrganizations),
-        fetchMetric('agents', dashboardApi.getAgents),
+        fetchMetric('agents', () => agentsApi.getAgents(orgId)),
         fetchMetric('credentials', dashboardApi.getCredentials),
         fetchMetric('delegations', dashboardApi.getDelegations),
         fetchMetric('auditLogs', dashboardApi.getAuditLogs, true)
@@ -70,7 +72,7 @@ export const Dashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, orgId]);
 
   const getMetricDescription = (key) => {
     if (networkError) return <span className="text-danger">Backend Offline</span>;
@@ -99,6 +101,22 @@ export const Dashboard = () => {
         <LoadingState message="Loading dashboard metrics..." />
       ) : (
         <>
+          {data.agents === 0 && (
+            <div className="card bg-dark border-primary shadow-sm mb-4">
+              <div className="card-body d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                <div>
+                  <h4 className="mb-1 text-light">Welcome to {currentUser?.organization_name || 'your organization'}</h4>
+                  <p className="mb-0 text-muted">Register an agent to begin managing trusted workflows.</p>
+                </div>
+                <Link className="btn btn-primary text-nowrap" to="/onboarding">Register an agent</Link>
+              </div>
+            </div>
+          )}
+          {data.agents !== 0 && data.agents !== '—' && (
+            <div className="d-flex justify-content-end mb-3">
+              <Link className="btn btn-outline-info" to="/onboarding">Register another agent</Link>
+            </div>
+          )}
           <div className="row mb-4">
             <div className="col-md-3">
               <StatCard title="Organizations" value={data.organizations} icon="building" description={getMetricDescription('organizations')} />

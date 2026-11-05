@@ -134,7 +134,11 @@ def test_template_registration_success(client: TestClient, test_setup: dict):
             "template_version": "1.0.0",
             "capabilities": {
                 "hr.read_policies": "ALLOWED",
-                "hr.calculate_leave_balance": "DENIED"
+                "hr.calculate_leave_balance": "DENIED",
+                "hr.view_holiday_calendar": "ALLOWED",
+                "hr.check_leave_status": "DENIED",
+                "hr.submit_leave_request": "ALLOWED",
+                "hr.view_employee_profile": "DENIED",
             }
         }
     )
@@ -160,10 +164,14 @@ def test_template_registration_success(client: TestClient, test_setup: dict):
     
     # Check decisions
     decisions = db.query(AgentTemplateDecision).filter(AgentTemplateDecision.agent_id == agent_id).all()
-    assert len(decisions) == 2
+    assert len(decisions) == 6
     decision_map = {d.capability_code: d.decision for d in decisions}
     assert decision_map["hr.read_policies"] == "ALLOWED"
     assert decision_map["hr.calculate_leave_balance"] == "DENIED"
+    assert decision_map["hr.view_holiday_calendar"] == "ALLOWED"
+    assert decision_map["hr.check_leave_status"] == "DENIED"
+    assert decision_map["hr.submit_leave_request"] == "ALLOWED"
+    assert decision_map["hr.view_employee_profile"] == "DENIED"
     
     # Check delegation
     delegations = db.query(Delegation).filter(Delegation.delegatee_agent_id == agent_id).all()
@@ -174,6 +182,10 @@ def test_template_registration_success(client: TestClient, test_setup: dict):
     delegation_caps = [c.capability_code for c in delegation.capabilities]
     assert "hr.read_policies" in delegation_caps
     assert "hr.calculate_leave_balance" not in delegation_caps
+    assert "hr.view_holiday_calendar" in delegation_caps
+    assert "hr.check_leave_status" not in delegation_caps
+    assert "hr.submit_leave_request" in delegation_caps
+    assert "hr.view_employee_profile" not in delegation_caps
 
 
 @pytest.mark.asyncio

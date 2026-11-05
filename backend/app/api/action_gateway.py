@@ -46,6 +46,7 @@ async def execute_agent_action(
         db=db,
         challenge_id=request.challenge_id,
         vp_jwt=request.authentication_proof.vp_jwt,
+        source_agent_did=request.source_agent_did,
         target_agent_did=request.target_agent_did,
         action_type=request.action_type,
         resource_id=request.resource_id,

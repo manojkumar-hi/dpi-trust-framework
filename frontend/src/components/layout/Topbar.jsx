@@ -7,7 +7,7 @@ export const Topbar = () => {
   const [healthStatus, setHealthStatus] = useState('Checking...');
   const [isConnected, setIsConnected] = useState(false);
   const [agentName, setAgentName] = useState('Loading...');
-  const { isAuthenticated, agentId, logout } = useAuth();
+  const { isAuthenticated, agentId, currentUser, logout } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -65,7 +65,7 @@ export const Topbar = () => {
         {isAuthenticated && (
           <div className="d-flex align-items-center gap-2">
             <span className="badge bg-success">Authenticated</span>
-            <span className="text-light small fw-bold">Signed in as: {agentName}</span>
+            <span className="text-light small fw-bold">Signed in as: {currentUser?.full_name || agentName || 'Administrator'}</span>
             <button 
               className="btn btn-sm btn-outline-danger ms-2"
               onClick={handleSignOut}

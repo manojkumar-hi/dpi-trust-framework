@@ -4,6 +4,9 @@ import { trustApi } from '../api/trust';
 import { LoadingState } from '../components/common/LoadingState';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { StatCard } from '../components/common/StatCard';
+import { RegisterTemplateModal } from '../components/RegisterTemplateModal';
+import { useAuth } from '../context/AuthContext';
+import { AgentInteractionModal } from '../components/AgentInteractionModal';
 
 const AgentDetailsModal = ({ agent, onClose }) => {
   const [trustData, setTrustData] = useState(null);
@@ -266,6 +269,7 @@ const AgentDetailsModal = ({ agent, onClose }) => {
 };
 
 export const Agents = () => {
+  const { orgId } = useAuth();
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -276,15 +280,18 @@ export const Agents = () => {
   
   // Modal state
   const [selectedAgent, setSelectedAgent] = useState(null);
+  const [interactionAgent, setInteractionAgent] = useState(null);
+  const [showRegisterTemplate, setShowRegisterTemplate] = useState(false);
 
   useEffect(() => {
+    if (!orgId) return undefined;
     let isMounted = true;
     
     const fetchAgents = async () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await agentsApi.getAgents();
+        const data = await agentsApi.getAgents(orgId);
         if (isMounted) {
           setAgents(data);
         }
@@ -310,7 +317,7 @@ export const Agents = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [orgId]);
 
   // Derived stats
   const totalAgents = agents.length;
@@ -368,7 +375,10 @@ export const Agents = () => {
 
           <div className="card bg-dark border-secondary shadow-sm">
             <div className="card-header border-secondary bg-transparent py-3 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
-              <h6 className="mb-0 fw-semibold text-light"><i className="bi bi-list-ul me-2"></i>Registered Agents</h6>
+              <div className="d-flex align-items-center justify-content-between w-100">
+                <h6 className="mb-0 fw-semibold text-light"><i className="bi bi-list-ul me-2"></i>Registered Agents</h6>
+                <button className="btn btn-sm btn-primary" onClick={() => setShowRegisterTemplate(true)}><i className="bi bi-plus-circle me-1"></i>Register Agent</button>
+              </div>
               <div className="d-flex flex-column flex-md-row gap-2">
                 <div className="input-group input-group-sm" style={{ width: '250px' }}>
                   <span className="input-group-text bg-dark border-secondary text-muted"><i className="bi bi-search"></i></span>
@@ -433,6 +443,11 @@ export const Agents = () => {
                           <td className="border-secondary font-monospace text-muted small text-truncate-uuid text-truncate" title={agent.organization_id}>{agent.organization_id}</td>
                           <td className="border-secondary text-muted small">{new Date(agent.created_at).toLocaleDateString()}</td>
                           <td className="border-secondary px-3 text-end">
+                            {agent.template_id && (
+                              <button className="btn btn-sm btn-primary me-2" onClick={() => setInteractionAgent(agent)}>
+                                <i className="bi bi-chat-dots me-1"></i>Try agent
+                              </button>
+                            )}
                             <button 
                               className="btn btn-sm btn-outline-light" 
                               onClick={() => setSelectedAgent(agent)}
@@ -455,6 +470,19 @@ export const Agents = () => {
         <AgentDetailsModal 
           agent={selectedAgent} 
           onClose={() => setSelectedAgent(null)} 
+        />
+      )}
+      {interactionAgent && <AgentInteractionModal agent={interactionAgent} onClose={() => setInteractionAgent(null)} />}
+      {showRegisterTemplate && (
+        <RegisterTemplateModal
+          onClose={() => setShowRegisterTemplate(false)}
+          onSuccess={async () => {
+            try {
+              setAgents(await agentsApi.getAgents(orgId));
+            } catch {
+              setError({ type: 'api', message: 'The agent was registered, but the registry could not be refreshed.' });
+            }
+          }}
         />
       )}
     </div>

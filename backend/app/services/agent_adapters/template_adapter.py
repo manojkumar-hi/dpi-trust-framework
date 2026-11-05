@@ -49,6 +49,6 @@ class AgentTemplateAdapter(AgentRuntimeAdapter):
                 result = await tool_def.func(**payload)
             else:
                 result = tool_def.func(**payload)
-            return AdapterExecutionResult(status="SUCCESS", data={"result": result})
+            return AgentExecutionResult(status="SUCCESS", data={"result": result})
         except Exception as e:
-            return AdapterExecutionResult(status="FAILED", error=str(e))
+            return AgentExecutionResult(status="FAILED", error=str(e))

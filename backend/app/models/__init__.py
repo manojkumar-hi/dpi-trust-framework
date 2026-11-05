@@ -17,6 +17,8 @@ from app.models.idempotency import IdempotencyRecord
 from app.models.outbox import OutboxEvent
 from app.models.challenge import Challenge
 from app.models.bitstring_status_list import BitstringStatusList
+from app.models.organization_administrator import OrganizationAdministrator
+from app.models.revoked_auth_token import RevokedAuthToken
 __all__ = [
     "Agent",
     "AgentActionLog",
@@ -37,4 +39,6 @@ __all__ = [
     "OutboxEvent",
     "Challenge",
     "BitstringStatusList",
+    "OrganizationAdministrator",
+    "RevokedAuthToken",
 ]
