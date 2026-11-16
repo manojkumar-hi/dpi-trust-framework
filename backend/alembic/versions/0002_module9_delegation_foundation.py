@@ -40,6 +40,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("verification_method"),
     )
+
     op.create_index(
         "ix_organization_identity_keys_organization_identity_id",
         "organization_identity_keys",
@@ -62,6 +63,7 @@ def upgrade() -> None:
 
     if not context.is_offline_mode():
         connection = op.get_bind()
+
         key_table = sa.table(
             "organization_identity_keys",
             sa.column("id", postgresql.UUID(as_uuid=True)),
@@ -72,27 +74,29 @@ def upgrade() -> None:
             sa.column("status", sa.String()),
             sa.column("valid_from", sa.DateTime(timezone=True)),
         )
+
         existing_identities = connection.execute(
             sa.text(
                 "SELECT id, did, public_key, key_algorithm, created_at "
                 "FROM organization_identities"
             )
-        ).mappings()
-        connection.execute(
-            key_table.insert(),
-            [
-                {
-                    "id": uuid4(),
-                    "organization_identity_id": identity["id"],
-                    "verification_method": f"{identity['did']}#key-1",
-                    "public_key": identity["public_key"],
-                    "key_algorithm": identity["key_algorithm"],
-                    "status": "active",
-                    "valid_from": identity["created_at"],
-                }
-                for identity in existing_identities
-            ],
-        )
+        ).mappings().all()
+
+        key_records = [
+            {
+                "id": uuid4(),
+                "organization_identity_id": identity["id"],
+                "verification_method": f"{identity['did']}#key-1",
+                "public_key": identity["public_key"],
+                "key_algorithm": identity["key_algorithm"],
+                "status": "active",
+                "valid_from": identity["created_at"],
+            }
+            for identity in existing_identities
+        ]
+
+        if key_records:
+            connection.execute(key_table.insert(), key_records)
 
     op.create_table(
         "delegations",
@@ -136,10 +140,31 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("canonical_hash"),
     )
-    op.create_index("ix_delegations_delegator_organization_id", "delegations", ["delegator_organization_id"], unique=False)
-    op.create_index("ix_delegations_delegatee_agent_id", "delegations", ["delegatee_agent_id"], unique=False)
-    op.create_index("ix_delegations_parent_delegation_id", "delegations", ["parent_delegation_id"], unique=False)
-    op.create_index("ix_delegations_root_delegation_id", "delegations", ["root_delegation_id"], unique=False)
+
+    op.create_index(
+        "ix_delegations_delegator_organization_id",
+        "delegations",
+        ["delegator_organization_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_delegations_delegatee_agent_id",
+        "delegations",
+        ["delegatee_agent_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_delegations_parent_delegation_id",
+        "delegations",
+        ["parent_delegation_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_delegations_root_delegation_id",
+        "delegations",
+        ["root_delegation_id"],
+        unique=False,
+    )
     op.create_index("ix_delegations_status", "delegations", ["status"], unique=False)
     op.create_index("ix_delegations_expires_at", "delegations", ["expires_at"], unique=False)
 
@@ -153,8 +178,19 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["delegation_id"], ["delegations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_delegation_capabilities_delegation_id", "delegation_capabilities", ["delegation_id"], unique=False)
-    op.create_index("ix_delegation_capabilities_code", "delegation_capabilities", ["capability_code"], unique=False)
+
+    op.create_index(
+        "ix_delegation_capabilities_delegation_id",
+        "delegation_capabilities",
+        ["delegation_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_delegation_capabilities_code",
+        "delegation_capabilities",
+        ["capability_code"],
+        unique=False,
+    )
 
     op.create_table(
         "delegation_events",
@@ -170,7 +206,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["delegation_id"], ["delegations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_delegation_events_delegation_id", "delegation_events", ["delegation_id"], unique=False)
+
+    op.create_index(
+        "ix_delegation_events_delegation_id",
+        "delegation_events",
+        ["delegation_id"],
+        unique=False,
+    )
     op.create_index(
         "ix_delegation_events_delegation_occurred",
         "delegation_events",
@@ -185,5 +227,8 @@ def downgrade() -> None:
     op.drop_table("delegations")
     op.drop_index("uq_organization_identity_keys_active", table_name="organization_identity_keys")
     op.drop_index("ix_organization_identity_keys_status", table_name="organization_identity_keys")
-    op.drop_index("ix_organization_identity_keys_organization_identity_id", table_name="organization_identity_keys")
+    op.drop_index(
+        "ix_organization_identity_keys_organization_identity_id",
+        table_name="organization_identity_keys",
+    )
     op.drop_table("organization_identity_keys")
