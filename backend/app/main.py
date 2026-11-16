@@ -23,9 +23,6 @@ from app.api.audit import router as audit_router
 from app.api.action_gateway import router as action_gateway_router
 from app.api.authorization import router as authorization_router
 from app.core.config import get_settings
-from app.database.base import Base
-from app.database.connection import engine
-from app.database.migrations import apply_development_migrations
 from app.middleware.correlation import CorrelationIdMiddleware
 
 settings = get_settings()
@@ -34,8 +31,6 @@ from app.services.outbox_worker import outbox_worker
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    apply_development_migrations()
-    Base.metadata.create_all(bind=engine)
     outbox_worker.start()
     yield
     await outbox_worker.stop()
