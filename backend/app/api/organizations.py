@@ -10,9 +10,9 @@ from app.services.organization_service import (
     DuplicateOrganizationDomainError,
     create_organization,
     get_organization,
-    get_organizations,
 )
 from app.services.delegation_service import get_delegations
+from app.api.dependencies import Principal, get_current_principal
 
 router = APIRouter(prefix="/organizations", tags=["Organization Registry"])
 
@@ -37,13 +37,18 @@ def create_organization_endpoint(
 
 
 @router.get("", response_model=list[OrganizationResponse])
-def list_organizations(db: Session = Depends(get_db)) -> list[OrganizationResponse]:
-    return get_organizations(db)
+def list_organizations(
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
+) -> list[OrganizationResponse]:
+    organization = get_organization(db, principal.organization_id)
+    return [organization] if organization is not None else []
 
 
 @router.get("/{organization_id}", response_model=OrganizationResponse)
 def retrieve_organization(
-    organization_id: UUID, db: Session = Depends(get_db)
+    organization_id: UUID,
+    db: Session = Depends(get_db),
 ) -> OrganizationResponse:
     organization = get_organization(db, organization_id)
     if organization is None:
@@ -52,7 +57,10 @@ def retrieve_organization(
 
 
 @router.get("/{organization_id}/delegations", response_model=list[DelegationResponse])
-def get_delegations_for_organization(organization_id: UUID, db: Session = Depends(get_db)) -> list[DelegationResponse]:
+def get_delegations_for_organization(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[DelegationResponse]:
     organization = get_organization(db, organization_id)
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")

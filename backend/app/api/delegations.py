@@ -77,9 +77,9 @@ async def create_delegation_endpoint(
 @router.get("", response_model=list[DelegationResponse])
 def list_delegations(
     db: Session = Depends(get_db),
-    principal: dict = Depends(get_current_principal),
+    principal: Principal = Depends(get_current_principal),
 ) -> list[DelegationResponse]:
-    return get_delegations(db)
+    return get_delegations(db, organization_id=principal.organization_id)
 
 
 @router.get("/{delegation_id}", response_model=DelegationResponse)

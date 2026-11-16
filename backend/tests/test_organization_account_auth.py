@@ -47,6 +47,9 @@ def registration_payload(email: str):
         "email": email,
         "phone": "5550101234",
         "organization_name": "Example Organization",
+        "organization_type": "Private Limited",
+        "cin": "L12345AB1234PLC123456",
+        "website": "https://example.com",
         "password": "correct horse battery staple",
     }
 
@@ -84,7 +87,12 @@ def test_register_login_logout_and_data_persists(client):
 
     db = TestingSessionLocal()
     try:
-        assert db.get(Organization, UUID(registration["organization_id"])) is not None
+        organization = db.get(Organization, UUID(registration["organization_id"]))
+        assert organization is not None
+        assert organization.organization_type == "Private Limited"
+        assert organization.cin == "L12345AB1234PLC123456"
+        assert organization.official_email == email
+        assert organization.website == "https://example.com"
         assert db.query(OrganizationAdministrator).filter_by(email=email).one().password_hash != "correct horse battery staple"
         assert db.query(RevokedAuthToken).count() == 1
     finally:
@@ -114,6 +122,27 @@ def test_registration_enforces_phone_and_password_rules(client):
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "phone"]
     assert response.json()["detail"][0]["type"] == "string_too_short"
+
+
+def test_registration_enforces_conditional_cin_rules(client):
+    missing_cin = registration_payload(f"missing-cin-{uuid4()}@example.com")
+    missing_cin["cin"] = None
+    response = client.post("/auth/register", json=missing_cin)
+    assert response.status_code == 422
+    assert "CIN is required" in response.json()["detail"][0]["msg"]
+
+    non_company = registration_payload(f"non-company-{uuid4()}@example.com")
+    non_company["organization_type"] = "LLP"
+    non_company["cin"] = "L12345AB1234PLC123456"
+    response = client.post("/auth/register", json=non_company)
+    assert response.status_code == 422
+    assert "only applicable" in response.json()["detail"][0]["msg"]
+
+    invalid_cin = registration_payload(f"invalid-cin-{uuid4()}@example.com")
+    invalid_cin["cin"] = "INVALID"
+    response = client.post("/auth/register", json=invalid_cin)
+    assert response.status_code == 422
+    assert "valid 21-character CIN" in response.json()["detail"][0]["msg"]
 
     invalid_password = registration_payload(f"password-{uuid4()}@example.com")
     invalid_password["password"] = "short"

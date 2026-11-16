@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { credentialsApi } from '../api/credentials';
+import { agentsApi } from '../api/agents';
 import { verificationApi } from '../api/verification';
 import { LoadingState } from '../components/common/LoadingState';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { StatCard } from '../components/common/StatCard';
+import { useAuth } from '../context/AuthContext';
 
 const CredentialDetailsModal = ({ credential, onClose }) => {
   const [verifyResult, setVerifyResult] = useState(null);
@@ -274,7 +276,9 @@ const CredentialDetailsModal = ({ credential, onClose }) => {
 };
 
 export const Credentials = () => {
+  const { orgId } = useAuth();
   const [credentials, setCredentials] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -292,9 +296,13 @@ export const Credentials = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await credentialsApi.getCredentials();
+        const [credentialData, agentData] = await Promise.all([
+          credentialsApi.getCredentials({}, orgId),
+          agentsApi.getAgents(orgId),
+        ]);
         if (isMounted) {
-          setCredentials(data);
+          setCredentials(credentialData);
+          setAgents(agentData);
         }
       } catch (err) {
         if (isMounted) {
@@ -318,7 +326,12 @@ export const Credentials = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [orgId]);
+
+  const agentNamesById = useMemo(
+    () => new Map(agents.map((agent) => [String(agent.id), agent.name])),
+    [agents]
+  );
 
   // Derived stats
   const totalCreds = credentials.length;
@@ -332,16 +345,18 @@ export const Credentials = () => {
   const filteredCredentials = useMemo(() => {
     return credentials.filter(cred => {
       const lowerSearch = searchTerm.toLowerCase();
+      const agentName = agentNamesById.get(String(cred.subject_agent_id)) || '';
       const matchesSearch = 
         cred.id.toLowerCase().includes(lowerSearch) || 
         cred.credential_type.toLowerCase().includes(lowerSearch) ||
         cred.issuer_organization_id.toLowerCase().includes(lowerSearch) ||
-        cred.subject_agent_id.toLowerCase().includes(lowerSearch);
+        cred.subject_agent_id.toLowerCase().includes(lowerSearch) ||
+        agentName.toLowerCase().includes(lowerSearch);
         
       const matchesStatus = statusFilter === 'All' || cred.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [credentials, searchTerm, statusFilter]);
+  }, [agentNamesById, credentials, searchTerm, statusFilter]);
 
   return (
     <div className="container-fluid position-relative">
@@ -388,10 +403,10 @@ export const Credentials = () => {
               <div className="d-flex flex-column flex-md-row gap-2">
                 <div className="input-group input-group-sm" style={{ width: '300px' }}>
                   <span className="input-group-text bg-dark border-secondary text-muted"><i className="bi bi-search"></i></span>
-                  <input 
+                  <input
                     type="text" 
                     className="form-control bg-dark border-secondary text-light" 
-                    placeholder="Search ID, Type, Issuer, Subject..." 
+                    placeholder="Search credential or agent..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
@@ -423,9 +438,7 @@ export const Credentials = () => {
                     <thead>
                       <tr>
                         <th className="border-secondary px-3 py-3">Credential ID</th>
-                        <th className="border-secondary py-3">Type</th>
-                        <th className="border-secondary py-3">Issuer</th>
-                        <th className="border-secondary py-3">Subject Agent</th>
+                        <th className="border-secondary py-3">Agent Name</th>
                         <th className="border-secondary py-3">Status</th>
                         <th className="border-secondary py-3">Issued / Expires</th>
                         <th className="border-secondary px-3 py-3 text-end">Actions</th>
@@ -438,13 +451,9 @@ export const Credentials = () => {
                             <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={cred.id}>{cred.id}</span>
                           </td>
                           <td className="border-secondary">
-                            <span className="text-light">{cred.credential_type}</span>
-                          </td>
-                          <td className="border-secondary">
-                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={cred.issuer_organization_id}>{cred.issuer_organization_id}</span>
-                          </td>
-                          <td className="border-secondary">
-                            <span className="font-monospace text-muted small text-truncate-uuid text-truncate" title={cred.subject_agent_id}>{cred.subject_agent_id}</span>
+                            <span className="text-light fw-semibold">
+                              {agentNamesById.get(String(cred.subject_agent_id)) || 'Unknown agent'}
+                            </span>
                           </td>
                           <td className="border-secondary"><StatusBadge status={cred.status} /></td>
                           <td className="border-secondary text-muted small">
@@ -455,10 +464,10 @@ export const Credentials = () => {
                           </td>
                           <td className="border-secondary px-3 text-end">
                             <button 
-                              className="btn btn-sm btn-outline-light" 
+                              className="btn btn-sm btn-primary" 
                               onClick={() => setSelectedCred(cred)}
                             >
-                              View
+                              <i className="bi bi-eye me-1"></i>View
                             </button>
                           </td>
                         </tr>

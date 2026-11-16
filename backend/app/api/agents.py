@@ -94,13 +94,20 @@ async def register_template_endpoint(
 
 @router.get("", response_model=list[AgentResponse])
 def list_agents(
-    organization_id: UUID | None = Query(default=None), db: Session = Depends(get_db)
+    organization_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
 ) -> list[AgentResponse]:
-    return get_agents(db, organization_id)
+    if organization_id is not None and organization_id != principal.organization_id:
+        return []
+    return get_agents(db, principal.organization_id)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-def retrieve_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentResponse:
+def retrieve_agent(
+    agent_id: UUID,
+    db: Session = Depends(get_db),
+) -> AgentResponse:
     agent = get_agent(db, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
@@ -108,7 +115,10 @@ def retrieve_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentRespon
 
 
 @router.get("/{agent_id}/delegations", response_model=list[DelegationResponse])
-def get_delegations_for_agent(agent_id: UUID, db: Session = Depends(get_db)) -> list[DelegationResponse]:
+def get_delegations_for_agent(
+    agent_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[DelegationResponse]:
     agent = get_agent(db, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")

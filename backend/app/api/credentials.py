@@ -95,13 +95,15 @@ def list_credential_records(
     credential_type: str | None = Query(default=None),
     credential_status: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_principal),
 ) -> list[CredentialResponse]:
     return list_credentials(
         db,
-        issuer_organization_id,
+        principal.organization_id,
         subject_agent_id,
         credential_type,
         credential_status,
+        organization_id=principal.organization_id,
     )
 
 

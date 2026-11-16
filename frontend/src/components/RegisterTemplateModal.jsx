@@ -62,7 +62,7 @@ export const RegisterTemplateModal = ({ onClose, onSuccess }) => {
           {error && <div className="alert alert-danger py-2">{error}</div>}
           {registration ? (
             <>
-              <div className="alert alert-success">Agent registered successfully.</div>
+              <div className="alert alert-success"><i className="bi bi-check-circle-fill me-2"></i>Agent registered successfully.</div>
               <dl className="row small mb-4">
                 <dt className="col-sm-4">Agent</dt><dd className="col-sm-8">{registration.name}</dd>
                 <dt className="col-sm-4">Role</dt><dd className="col-sm-8">{selectedTemplate?.display_name}</dd>

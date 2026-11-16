@@ -66,7 +66,14 @@ def register_organization(db: Session, request: OrganizationRegistrationRequest)
     email_domain = email.split("@", 1)[1]
     organization_slug = re.sub(r"[^a-z0-9]+", "-", request.organization_name.strip().lower()).strip("-") or "organization"
     domain = f"{organization_slug}-{uuid4().hex[:12]}.{email_domain}"
-    organization = Organization(name=request.organization_name.strip(), domain=domain)
+    organization = Organization(
+        name=request.organization_name.strip(),
+        domain=domain,
+        organization_type=request.organization_type,
+        cin=request.cin,
+        official_email=email,
+        website=request.website,
+    )
     administrator = OrganizationAdministrator(
         organization=organization,
         full_name=request.full_name.strip(),

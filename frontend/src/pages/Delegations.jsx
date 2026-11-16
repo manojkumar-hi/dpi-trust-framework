@@ -384,7 +384,7 @@ export const Delegations = () => {
         setLoading(true);
         setError(null);
         const [data, agentRecords] = await Promise.all([
-          delegationsApi.getDelegations(),
+          delegationsApi.getDelegations(orgId),
           agentsApi.getAgents(orgId),
         ]);
         if (isMounted) {

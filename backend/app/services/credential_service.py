@@ -86,7 +86,8 @@ from sqlalchemy.orm import selectinload
 async def create_credential(db: Session, credential_data: CredentialCreate) -> VerifiableCredential:
     if get_organization(db, credential_data.issuer_organization_id) is None:
         raise IssuerOrganizationNotFoundError
-    if get_agent(db, credential_data.subject_agent_id) is None:
+    subject_agent = get_agent(db, credential_data.subject_agent_id)
+    if subject_agent is None or subject_agent.status != "active":
         raise SubjectAgentNotFoundError
     issuer_identity = db.scalar(
         select(OrganizationIdentity)
@@ -241,6 +242,7 @@ def list_credentials(
     subject_agent_id: UUID | None = None,
     credential_type: str | None = None,
     status: str | None = None,
+    organization_id: UUID | None = None,
 ) -> list[VerifiableCredential]:
     statement = select(VerifiableCredential).order_by(VerifiableCredential.created_at)
     if issuer_organization_id is not None:
@@ -249,6 +251,13 @@ def list_credentials(
         )
     if subject_agent_id is not None:
         statement = statement.where(VerifiableCredential.subject_agent_id == subject_agent_id)
+    if organization_id is not None:
+        statement = statement.where(
+            (VerifiableCredential.issuer_organization_id == organization_id)
+            | VerifiableCredential.subject_agent_id.in_(
+                select(Agent.id).where(Agent.organization_id == organization_id)
+            )
+        )
     if credential_type is not None:
         statement = statement.where(VerifiableCredential.credential_type == credential_type)
     if status is not None:

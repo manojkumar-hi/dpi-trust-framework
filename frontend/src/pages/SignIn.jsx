@@ -8,6 +8,9 @@ const emptyForm = {
   email: '',
   phone: '',
   organization_name: '',
+  organization_type: '',
+  cin: '',
+  website: '',
   password: ''
 };
 
@@ -49,7 +52,11 @@ export const SignIn = () => {
   }, [isAuthenticated, navigate]);
 
   const updateField = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === 'organization_type' && !['Private Limited', 'Public Limited'].includes(value) ? { cin: '' } : {})
+    }));
   };
 
   const submit = async (event) => {
@@ -78,14 +85,28 @@ export const SignIn = () => {
   };
 
   const isRegistering = mode === 'register';
-  const fields = isRegistering ? ['full_name', 'email', 'phone', 'organization_name', 'password'] : ['email', 'password'];
+  const fields = isRegistering ? ['full_name', 'email', 'phone', 'organization_name', 'organization_type', 'cin', 'website', 'password'] : ['email', 'password'];
   const labels = {
     full_name: 'Administrator name',
-    email: 'Work email',
+    email: 'Official organization email / work email',
     phone: 'Phone number',
     organization_name: 'Organization name',
+    organization_type: 'Organization type',
+    cin: 'CIN number',
+    website: 'Organization website',
     password: 'Password'
   };
+  const companyTypeOptions = ['Private Limited', 'Public Limited'];
+  const organizationTypeOptions = [
+    'Private Limited',
+    'Public Limited',
+    'LLP',
+    'Partnership',
+    'Proprietorship',
+    'Trust / Society',
+    'Government',
+    'Other'
+  ];
 
   return (
     <div className="signin-page">
@@ -116,36 +137,65 @@ export const SignIn = () => {
           {error && <div className="alert alert-danger py-2 small" role="alert">{error}</div>}
 
           <form onSubmit={submit}>
-            {fields.map((field) => (
+            {fields.map((field) => {
+              if (field === 'cin' && !companyTypeOptions.includes(form.organization_type)) return null;
+              return (
               <div className="mb-3" key={field}>
                 <label htmlFor={'account-' + field} className="form-label text-muted small fw-semibold">
                   {labels[field]}
                 </label>
                 <div className="position-relative">
-                  <input
-                    id={'account-' + field}
-                    type={field === 'password' ? (showPassword ? 'text' : 'password') : field === 'email' ? 'email' : field === 'phone' ? 'tel' : 'text'}
-                    className={'form-control bg-dark text-light border-secondary' + (field === 'password' ? ' pe-5' : '')}
-                    value={form[field]}
-                    onChange={(event) => updateField(field, event.target.value)}
-                    autoComplete={
-                      field === 'password'
-                        ? (isRegistering ? 'new-password' : 'current-password')
-                        : field === 'email'
-                          ? 'email'
-                          : field === 'full_name'
-                            ? 'name'
-                            : field === 'phone'
-                              ? 'tel'
-                              : 'organization'
-                    }
-                    minLength={isRegistering && field === 'password' ? 8 : isRegistering && field === 'phone' ? 10 : undefined}
-                    maxLength={field === 'password' ? 256 : isRegistering && field === 'phone' ? 10 : undefined}
-                    pattern={isRegistering && field === 'phone' ? '[0-9]{10}' : undefined}
-                    inputMode={isRegistering && field === 'phone' ? 'numeric' : undefined}
-                    title={isRegistering && field === 'phone' ? 'Enter exactly 10 digits.' : undefined}
-                    required
-                  />
+                  {field === 'organization_type' ? (
+                    <select
+                      id={'account-' + field}
+                      className="form-select bg-dark text-light border-secondary"
+                      value={form[field]}
+                      onChange={(event) => updateField(field, event.target.value)}
+                      required
+                    >
+                      <option value="">Select organization type...</option>
+                      {organizationTypeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      id={'account-' + field}
+                      type={field === 'password' ? (showPassword ? 'text' : 'password') : field === 'email' ? 'email' : field === 'phone' ? 'tel' : field === 'website' ? 'url' : 'text'}
+                      className={'form-control bg-dark text-light border-secondary' + (field === 'password' ? ' pe-5' : '')}
+                      value={form[field]}
+                      onChange={(event) => updateField(field, event.target.value)}
+                      autoComplete={
+                        field === 'password'
+                          ? (isRegistering ? 'new-password' : 'current-password')
+                          : field === 'email'
+                            ? 'email'
+                            : field === 'full_name'
+                              ? 'name'
+                              : field === 'phone'
+                                ? 'tel'
+                                : field === 'website'
+                                  ? 'url'
+                                  : 'organization'
+                      }
+                      minLength={isRegistering && field === 'password' ? 8 : isRegistering && field === 'phone' ? 10 : undefined}
+                      maxLength={field === 'password' ? 256 : isRegistering && field === 'phone' ? 10 : field === 'cin' ? 21 : undefined}
+                      pattern={
+                        isRegistering && field === 'phone'
+                          ? '[0-9]{10}'
+                          : isRegistering && field === 'cin'
+                            ? '[LU][0-9]{5}[A-Za-z]{2}[0-9]{4}[A-Za-z]{3}[0-9]{6}'
+                            : undefined
+                      }
+                      inputMode={isRegistering && field === 'phone' ? 'numeric' : undefined}
+                      title={
+                        isRegistering && field === 'phone'
+                          ? 'Enter exactly 10 digits.'
+                          : isRegistering && field === 'cin'
+                            ? 'Enter a valid 21-character CIN.'
+                            : undefined
+                      }
+                      required={field !== 'website'}
+                    />
+                  )}
                 {field === 'password' && (
                   <button
                     type="button"
@@ -164,8 +214,15 @@ export const SignIn = () => {
                 {isRegistering && field === 'password' && (
                   <div className="form-text">Use at least 8 characters.</div>
                 )}
+                {isRegistering && field === 'email' && (
+                  <div className="form-text">This email is used for administrator login and recorded as the official organization email.</div>
+                )}
+                {isRegistering && field === 'cin' && (
+                  <div className="form-text">Required for Private Limited and Public Limited companies.</div>
+                )}
               </div>
-            ))}
+              );
+            })}
             {isRegistering && <p className="text-muted small">Email verification is not required for local account setup.</p>}
             <button type="submit" className="btn signin-submit w-100 py-2 fw-semibold" disabled={loading}>
               {loading ? (isRegistering ? 'Registering...' : 'Signing in...') : (isRegistering ? 'Create Organization Account' : 'Sign In')}

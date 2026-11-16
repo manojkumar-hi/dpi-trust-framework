@@ -52,7 +52,7 @@ async def test_unknown_sample_employee_does_not_return_real_data():
 
 def test_hr_policies_require_matching_allowlisted_delegation_capability():
     capabilities = {rule.action for rule in POLICY_CATALOG if rule.action.startswith("hr.")}
-    assert len(capabilities) == 6
+    assert len(capabilities) == 7
     for capability in capabilities:
         rule = next(rule for rule in POLICY_CATALOG if rule.resource_type == "agent" and rule.action == capability)
         assert rule.requires_delegation is True

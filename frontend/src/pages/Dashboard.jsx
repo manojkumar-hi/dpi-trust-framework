@@ -52,10 +52,10 @@ export const Dashboard = () => {
       };
 
       await Promise.allSettled([
-        fetchMetric('organizations', dashboardApi.getOrganizations),
+        fetchMetric('organizations', () => dashboardApi.getOrganizations(orgId)),
         fetchMetric('agents', () => agentsApi.getAgents(orgId)),
-        fetchMetric('credentials', dashboardApi.getCredentials),
-        fetchMetric('delegations', dashboardApi.getDelegations),
+        fetchMetric('credentials', () => dashboardApi.getCredentials(orgId)),
+        fetchMetric('delegations', () => dashboardApi.getDelegations(orgId)),
         fetchMetric('auditLogs', dashboardApi.getAuditLogs, true)
       ]);
 
@@ -101,17 +101,15 @@ export const Dashboard = () => {
         <LoadingState message="Loading dashboard metrics..." />
       ) : (
         <>
-          {data.agents === 0 && (
-            <div className="card bg-dark border-primary shadow-sm mb-4">
-              <div className="card-body d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+          <div className="card bg-dark border-primary shadow-sm mb-4">
+            <div className="card-body d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
                 <div>
-                  <h4 className="mb-1 text-light">Welcome to {currentUser?.organization_name || 'your organization'}</h4>
-                  <p className="mb-0 text-muted">Register an agent to begin managing trusted workflows.</p>
+                  <h4 className="mb-1 text-light">Welcome, {currentUser?.organization_name || 'your organization'}!</h4>
+                  <p className="mb-0 text-muted">Your AI agents. Your control. One trusted platform.</p>
                 </div>
-                <Link className="btn btn-primary text-nowrap" to="/onboarding">Register an agent</Link>
-              </div>
+                {data.agents === 0 && <Link className="btn btn-primary text-nowrap" to="/onboarding">Register an agent</Link>}
             </div>
-          )}
+          </div>
           {data.agents !== 0 && data.agents !== '—' && (
             <div className="d-flex justify-content-end mb-3">
               <Link className="btn btn-outline-info" to="/onboarding">Register another agent</Link>

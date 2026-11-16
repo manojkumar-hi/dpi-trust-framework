@@ -282,6 +282,7 @@ export const Agents = () => {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [interactionAgent, setInteractionAgent] = useState(null);
   const [showRegisterTemplate, setShowRegisterTemplate] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     if (!orgId) return undefined;
@@ -361,6 +362,7 @@ export const Agents = () => {
         </div>
       ) : (
         <>
+          {successMessage && <div className="alert alert-success" role="status"><i className="bi bi-check-circle-fill me-2"></i>{successMessage}</div>}
           <div className="row mb-4">
             <div className="col-md-4">
               <StatCard title="Total Agents" value={totalAgents} icon="robot" />
@@ -479,6 +481,8 @@ export const Agents = () => {
           onSuccess={async () => {
             try {
               setAgents(await agentsApi.getAgents(orgId));
+              setSuccessMessage('Agent registered successfully.');
+              setError(null);
             } catch {
               setError({ type: 'api', message: 'The agent was registered, but the registry could not be refreshed.' });
             }

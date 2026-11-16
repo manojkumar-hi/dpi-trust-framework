@@ -1,6 +1,5 @@
 from uuid import UUID
 
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -64,7 +63,10 @@ async def register_agent_from_template(
     return agent
 
 
-def get_agents(db: Session, organization_id: UUID | None = None) -> list[Agent]:
+def get_agents(
+    db: Session,
+    organization_id: UUID | None = None,
+) -> list[Agent]:
     statement = select(Agent).order_by(Agent.created_at)
     if organization_id is not None:
         statement = statement.where(Agent.organization_id == organization_id)

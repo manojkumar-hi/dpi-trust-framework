@@ -1,9 +1,11 @@
 import apiClient from './client';
 
 export const delegationsApi = {
-  getDelegations: async () => {
+  getDelegations: async (organizationId = null) => {
     const response = await apiClient.get('/delegations');
-    return response.data;
+    return response.data.filter((delegation) => (
+      !organizationId || delegation.delegator_organization_id === organizationId
+    ));
   },
   verifyDelegation: async (delegationId) => {
     const response = await apiClient.get(`/delegations/${delegationId}/verify`);
